@@ -53,7 +53,10 @@ const airlinePrefixes = {
   AAL: "American Airlines",
   ACA: "Air Canada",
   AFR: "Air France",
+  AUR: "Aurigny",
   BAW: "British Airways",
+  EIN: "Aer Lingus",
+  EXS: "Jet2",
   DAL: "Delta Air Lines",
   DLH: "Lufthansa",
   EZY: "easyJet",
@@ -61,10 +64,13 @@ const airlinePrefixes = {
   IBE: "Iberia",
   JBU: "JetBlue",
   KLM: "KLM",
+  LOG: "Loganair",
   QFA: "Qantas",
+  QTR: "Qatar Airways",
   RYR: "Ryanair",
   SAS: "SAS",
   SWA: "Southwest Airlines",
+  TOM: "TUI Airways",
   THY: "Turkish Airlines",
   UAE: "Emirates",
   UAL: "United Airlines",
@@ -76,18 +82,24 @@ const airlineBranding = {
   AAL: { label: "AA", colors: ["#d71920", "#1f4e9d"] },
   ACA: { label: "AC", colors: ["#111111", "#e31b23"] },
   AFR: { label: "AF", colors: ["#062b68", "#ed2939"] },
+  AUR: { label: "GR", colors: ["#003b5c", "#f7d117"] },
   BAW: { label: "BA", colors: ["#075aaa", "#e31e2f"] },
+  EIN: { label: "EI", colors: ["#00843d", "#ffffff"] },
+  EXS: { label: "LS", colors: ["#d71920", "#f5c400"] },
   DAL: { label: "DL", colors: ["#c8102e", "#003a70"] },
   DLH: { label: "LH", colors: ["#05164d", "#ffcc00"] },
-  EZY: { label: "EZ", colors: ["#ff6600", "#ffffff"] },
+  EZY: { label: "U2", colors: ["#ff6600", "#ffffff"] },
   FIN: { label: "AY", colors: ["#0b1560", "#ffffff"] },
   IBE: { label: "IB", colors: ["#d71920", "#f6c500"] },
   JBU: { label: "B6", colors: ["#003876", "#00a3e0"] },
   KLM: { label: "KL", colors: ["#00a1de", "#ffffff"] },
+  LOG: { label: "LM", colors: ["#00843d", "#ffffff"] },
   QFA: { label: "QF", colors: ["#e4002b", "#ffffff"] },
+  QTR: { label: "QR", colors: ["#5c0632", "#ffffff"] },
   RYR: { label: "FR", colors: ["#073590", "#f1c933"] },
   SAS: { label: "SK", colors: ["#003d7c", "#ffffff"] },
   SWA: { label: "WN", colors: ["#304cb2", "#ffbf27"] },
+  TOM: { label: "BY", colors: ["#70cbf4", "#d71920"] },
   THY: { label: "TK", colors: ["#d71920", "#ffffff"] },
   UAE: { label: "EK", colors: ["#d71920", "#ffffff"] },
   UAL: { label: "UA", colors: ["#005daa", "#00a3e0"] },
@@ -130,7 +142,9 @@ let state = {
   lastAirAmbulance: null,
   testAlertUntil: 0,
   militaryLog: loadMilitaryLog(),
+  routeCache: new Map(),
   weather: [],
+  currentTemperature: null,
   weatherUpdatedAt: null,
   bitcoin: null,
   bitcoinUpdatedAt: null,
@@ -414,6 +428,9 @@ function bitcoinTrendLabel() {
 function renderTicker() {
   const items = [];
   const { firstRain, strongestRain } = rainWindow();
+  if (Number.isFinite(state.currentTemperature)) {
+    items.push(`Local temp ${Math.round(state.currentTemperature)}°C`);
+  }
   if (firstRain) {
     items.push(`Rain ${formatLeadTime(firstRain.timestamp)} around ${formatHour(firstRain.time)} - bring washing in`);
     if (strongestRain && strongestRain !== firstRain) {
@@ -498,6 +515,7 @@ async function fetchWeather(position) {
       directUrl.search = new URLSearchParams({
         latitude: String(position.lat),
         longitude: String(position.lon),
+        current: "temperature_2m",
         hourly: "temperature_2m,precipitation_probability,precipitation,weather_code",
         forecast_days: "2",
         timezone: "auto",
@@ -520,6 +538,7 @@ async function fetchWeather(position) {
       }))
       .filter((hour) => hour.timestamp >= now - 60 * 60 * 1000)
       .slice(0, 12);
+    state.currentTemperature = Number(data.current?.temperature_2m ?? state.weather[0]?.temperature);
     state.weatherUpdatedAt = Date.now();
   } catch (error) {
     console.warn(error);
@@ -528,6 +547,7 @@ async function fetchWeather(position) {
       directUrl.search = new URLSearchParams({
         latitude: String(position.lat),
         longitude: String(position.lon),
+        current: "temperature_2m",
         hourly: "temperature_2m,precipitation_probability,precipitation,weather_code",
         forecast_days: "2",
         timezone: "auto",
@@ -548,9 +568,11 @@ async function fetchWeather(position) {
         }))
         .filter((hour) => hour.timestamp >= now - 60 * 60 * 1000)
         .slice(0, 12);
+      state.currentTemperature = Number(data.current?.temperature_2m ?? state.weather[0]?.temperature);
     } catch (fallbackError) {
       console.warn(fallbackError);
       state.weather = [];
+      state.currentTemperature = null;
     }
   }
   renderWeather();
@@ -689,6 +711,27 @@ function brandingForFlight(flight) {
   const prefix = airlineCodeFromFlight(flight);
   const fallback = String(flight || "?").replace(/[^A-Z0-9]/gi, "").slice(0, 2).toUpperCase() || "??";
   return airlineBranding[prefix] || { label: fallback, colors: ["#4d5b55", "#9fb4aa"] };
+}
+
+function airlineLogoUrl(flight) {
+  const prefix = airlineCodeFromFlight(flight);
+  if (!airlineBranding[prefix]) return "";
+  const branding = brandingForFlight(flight);
+  if (!branding?.label || branding.label === "??") return "";
+  return `https://images.kiwi.com/airlines/64x64/${encodeURIComponent(branding.label)}.png`;
+}
+
+function airlineLogoMarkup(aircraft, extraClass = "", id = "") {
+  const branding = brandingForFlight(aircraft.flight);
+  const logo = airlineLogoUrl(aircraft.flight);
+  const label = escapeHtml(branding.label);
+  const name = escapeHtml(`${aircraft.airline || "Airline"} logo`);
+  return `
+    <span ${id ? `id="${id}" ` : ""}class="airline-logo ${extraClass}" aria-label="${name}">
+      ${logo ? `<img src="${logo}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove(); this.parentElement.classList.add('logo-fallback');" />` : ""}
+      <span>${label}</span>
+    </span>
+  `;
 }
 
 function displayServiceName(aircraft) {
@@ -869,8 +912,8 @@ function normalizeAircraft(item, origin) {
     airline: airlineFromFlight(flight, item.ownOp || item.operator || item.airline),
     aircraftType: formatAircraftType(item.t || item.type || item.aircraft_type),
     altitude: item.alt_baro ?? item.alt_geom ?? item.altitude,
-    from: item.from || "Route data needed",
-    to: item.to || "Route data needed",
+    from: item.from || item.origin || "Route lookup pending",
+    to: item.to || item.destination || "Route lookup pending",
     distance,
     bearing: Number.isFinite(lat) && Number.isFinite(lon) ? bearingBetween(origin.lat, origin.lon, lat, lon) : 0,
     heading: Number(item.track ?? item.nav_heading ?? item.heading ?? 0),
@@ -943,6 +986,83 @@ async function fetchAircraft(position, radiusMiles) {
     aircraft: demoAircraft.map((item) => decorateAircraft({ ...item })),
     source: "Demo data",
   };
+}
+
+function compactRouteName(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+  return [
+    value.iata_code,
+    value.iata,
+    value.icao_code,
+    value.icao,
+    value.name,
+    value.airport,
+    value.municipality,
+  ]
+    .map((item) => String(item || "").trim())
+    .find(Boolean) || "";
+}
+
+function extractRouteDetails(payload) {
+  const route = payload?.data?.response?.flightroute || payload?.response?.flightroute || payload?.flightroute || payload?.route;
+  if (!route) return null;
+  const from = compactRouteName(route.origin || route.from || route.departure);
+  const to = compactRouteName(route.destination || route.to || route.arrival);
+  const airline =
+    compactRouteName(route.airline) ||
+    compactRouteName(route.operator) ||
+    compactRouteName(payload?.data?.response?.aircraft?.operator);
+  if (!from && !to && !airline) return null;
+  return { from, to, airline };
+}
+
+function routeNeedsLookup(aircraft) {
+  return [aircraft.from, aircraft.to].some((value) => /lookup pending|data needed|unknown/i.test(String(value || "")));
+}
+
+function routeLookupCandidate(aircraft) {
+  const callsign = String(aircraft.flight || "").trim().toUpperCase();
+  if (!callsign || /unknown/i.test(callsign)) return false;
+  if (/^\d+$/.test(callsign)) return false;
+  if (!/[A-Z]{3}\d/.test(callsign)) return false;
+  if (!airlinePrefixes[airlineCodeFromFlight(callsign)] && aircraft.airline === "Unknown airline") return false;
+  if (aircraft.specialReason) return false;
+  return routeNeedsLookup(aircraft);
+}
+
+async function fetchRouteDetails(aircraft) {
+  const callsign = String(aircraft.flight || "").trim().toUpperCase();
+  if (!callsign || !liveServerAvailable || !routeLookupCandidate(aircraft)) return null;
+  if (state.routeCache.has(callsign)) return state.routeCache.get(callsign);
+  try {
+    const url = new URL("/api/route", window.location.origin);
+    url.search = new URLSearchParams({ callsign }).toString();
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Route lookup returned ${response.status}`);
+    const details = extractRouteDetails(await response.json());
+    state.routeCache.set(callsign, details);
+    return details;
+  } catch (error) {
+    console.warn(error);
+    state.routeCache.set(callsign, null);
+    return null;
+  }
+}
+
+async function enrichAircraftRoutes(aircraftList) {
+  const candidates = aircraftList
+    .filter(routeLookupCandidate)
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 8);
+  for (const aircraft of candidates) {
+    const details = await fetchRouteDetails(aircraft);
+    if (!details) continue;
+    if (details.airline && aircraft.airline === "Unknown airline") aircraft.airline = details.airline;
+    if (details.from) aircraft.from = details.from;
+    if (details.to) aircraft.to = details.to;
+  }
+  return aircraftList;
 }
 
 function setMessage(text, visible = true) {
@@ -1177,14 +1297,14 @@ function renderTable() {
     tr.style.setProperty("--logo-b", branding.colors[1]);
     tr.classList.toggle("special-row", Boolean(aircraft.specialReason));
     tr.innerHTML = `
-      <td><span class="airline-logo" aria-label="${aircraft.airline} logo">${branding.label}</span></td>
+      <td>${airlineLogoMarkup(aircraft)}</td>
       <td><span class="flight">${aircraft.flight}</span><span class="subtle">${aircraft.airAmbulanceStatus || aircraft.specialReason || aircraft.status}</span></td>
       <td>${aircraft.airline}</td>
       <td>${aircraft.aircraftType || "Type unknown"}</td>
       <td>${formatAltitude(aircraft.altitude)}</td>
       <td>${formatSpeed(aircraft.speed)}</td>
-      <td class="${aircraft.from.includes("needed") ? "unknown" : ""}">${aircraft.from}</td>
-      <td class="${aircraft.to.includes("needed") ? "unknown" : ""}">${aircraft.to}</td>
+      <td class="${routeNeedsLookup(aircraft) ? "unknown" : ""}">${aircraft.from}</td>
+      <td class="${routeNeedsLookup(aircraft) ? "unknown" : ""}">${aircraft.to}</td>
       <td>${formatDistance(aircraft.distance)}</td>
     `;
     elements.rows.appendChild(tr);
@@ -1241,7 +1361,8 @@ function renderSpotlight() {
   }
 
   const branding = brandingForFlight(aircraft.flight);
-  elements.spotlightLogo.textContent = branding.label;
+  elements.spotlightLogo.outerHTML = airlineLogoMarkup(aircraft, "spotlight-logo", "spotlightLogo");
+  elements.spotlightLogo = document.querySelector("#spotlightLogo");
   elements.spotlightLogo.style.setProperty("--logo-a", branding.colors[0]);
   elements.spotlightLogo.style.setProperty("--logo-b", branding.colors[1]);
   elements.spotlightFlight.textContent = displayServiceName(aircraft);
@@ -1602,7 +1723,8 @@ async function refreshAircraft() {
   fetchWeather(state.userPosition);
 
   const result = await fetchAircraft(state.userPosition, radius);
-  state.aircraft = result.aircraft.map(decorateAircraft).filter((aircraft) => aircraft.distance <= radius);
+  const nearbyAircraft = result.aircraft.map(decorateAircraft).filter((aircraft) => aircraft.distance <= radius);
+  state.aircraft = await enrichAircraftRoutes(nearbyAircraft);
   const ambulance = activeAirAmbulance();
   if (ambulance) state.lastAirAmbulance = { aircraft: ambulance, seenAt: Date.now() };
   updateMilitaryLog();

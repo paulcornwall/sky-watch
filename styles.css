@@ -1191,6 +1191,29 @@ td {
   font-weight: 950;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
   box-shadow: 0 0 18px rgba(124, 202, 215, 0.16);
+  overflow: hidden;
+  position: relative;
+}
+
+.airline-logo img {
+  grid-area: 1 / 1;
+  width: 78%;
+  height: 78%;
+  object-fit: contain;
+  filter: drop-shadow(0 0 5px rgba(61, 255, 127, 0.22));
+  z-index: 1;
+}
+
+.airline-logo span {
+  grid-area: 1 / 1;
+}
+
+.airline-logo img + span {
+  opacity: 0;
+}
+
+.airline-logo.logo-fallback span {
+  opacity: 1;
 }
 
 tr:nth-child(even) td {

@@ -17,6 +17,7 @@ HOST = os.environ.get("HOST", "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
 TIMEOUT = 12
 CACHE_SECONDS = {
     "aircraft": 20,
+    "route": 3600,
     "weather": 300,
     "bitcoin": 120,
     "news": 300,
@@ -88,6 +89,8 @@ class LiveFeedHandler(SimpleHTTPRequestHandler):
         try:
             if parsed.path == "/api/aircraft":
                 self.handle_aircraft(params)
+            elif parsed.path == "/api/route":
+                self.handle_route(params)
             elif parsed.path == "/api/weather":
                 self.handle_weather(params)
             elif parsed.path == "/api/bitcoin":
@@ -125,6 +128,16 @@ class LiveFeedHandler(SimpleHTTPRequestHandler):
                 errors.append(str(error))
         json_response(self, {"error": "Aircraft feeds unavailable", "details": errors}, 502)
 
+    def handle_route(self, params):
+        callsign = (params.get("callsign", [""])[0] or "").strip().upper()
+        if not callsign:
+            json_response(self, {"error": "callsign is required"}, 400)
+            return
+
+        endpoint = f"https://api.adsbdb.com/v0/callsign/{callsign}"
+        data = cached(f"route:{callsign}", CACHE_SECONDS["route"], lambda: fetch_json(endpoint))
+        json_response(self, {"source": "adsbdb.com", "data": data})
+
     def handle_weather(self, params):
         lat = query_number(params, "lat")
         lon = query_number(params, "lon")
@@ -133,7 +146,8 @@ class LiveFeedHandler(SimpleHTTPRequestHandler):
             return
 
         query = (
-            "hourly=temperature_2m,precipitation_probability,precipitation,weather_code"
+            "current=temperature_2m"
+            "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code"
             "&forecast_days=2&timezone=auto"
         )
         endpoint = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&{query}"

@@ -23,13 +23,14 @@ The app:
 - Fits an iPad-sized wall display in landscape and portrait orientations.
 - Shows the local day, date, month and time in the header.
 - Shows a washing-focused rain alert for the next 12 hours.
-- Uses a scrolling live ticker for rain, aircraft, special alerts, local time and BTC.
+- Uses a scrolling live ticker for local temperature, rain, aircraft, special alerts, local time and BTC.
 - Adds breaking-news headlines to the live board when the news feed is available.
 - Shows live BTC price in USD with a 6 hour trend arrow when the market feed is available.
 - Starts in kiosk mode with controls hidden until `Controls` is tapped.
 - Rotates the spotlight through the nearest aircraft.
 - Shows movement status such as approaching, passing nearby, overhead or moving away.
 - Shows flight number, airline, altitude, origin, destination and distance.
+- Looks up origin and destination for routeable airline callsigns when the live server can reach ADSBDB.
 - Converts aircraft speed to mph for the display.
 - Shows aircraft type when the aircraft feed includes it.
 - Tracks closest aircraft today and lowest altitude seen.
@@ -38,7 +39,7 @@ The app:
 - Includes a discreet test alert button so you can check the air ambulance alert on the wall display.
 - Keeps an always-visible Air Ambulance Watch tile, even when the aircraft is not currently airborne.
 - Keeps a 48 hour on-device log of military aircraft seen within 5 miles.
-- Uses offline airline colour badges so the display still works without logo downloads.
+- Shows live airline logo images for recognised airlines, with offline colour badges as a fallback.
 - Keeps a compact real map/radar view with darkened OpenStreetMap tiles, animated scan effects, range rings, compass labels, a legend and aircraft markers.
 - Auto-tracks air ambulance, Coastguard and military aircraft on the map with stronger labels and short movement trails.
 - Adds Cornwall Air Ambulance live wording for heading your way, landed near a town, heading towards RCHT, heading towards Derriford Hospital, or heading back to Newquay base.
@@ -52,7 +53,7 @@ The app:
 
 ## Live Data Note
 
-ADS-B feeds normally provide aircraft position, callsign, speed, heading and altitude. They do not reliably include route origin and destination. The app marks live route fields as `Route data needed` unless a separate route lookup service is added.
+ADS-B feeds normally provide aircraft position, callsign, speed, heading and altitude. They do not reliably include route origin and destination. The live server now attempts a route lookup for recognised airline callsigns and shows airport codes when available. Private, military, emergency and unknown identifiers may still show `Route lookup pending` because those routes are not published in the same way.
 
 Route origin and destination usually need a separate provider such as AeroDataBox, Aviationstack, FlightAware or a FlightRadar-style route service. Keep API keys on the server, not in browser JavaScript.
 
