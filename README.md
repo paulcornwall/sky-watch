@@ -38,6 +38,8 @@ The app:
 - Uses offline airline colour badges so the display still works without logo downloads.
 - Keeps a compact real map/radar view with darkened OpenStreetMap tiles, animated scan effects, range rings, compass labels, a legend and aircraft markers.
 - Auto-tracks air ambulance, Coastguard and military aircraft on the map with stronger labels and short movement trails.
+- Adds Cornwall Air Ambulance live wording for heading your way, landed near a town, heading towards RCHT, heading towards Derriford Hospital, or heading back to Newquay base.
+- Shows a flashing close-range alert when Cornwall Air Ambulance comes within 3 miles of the saved user location, with optional sound when `Chime on` is enabled.
 - Uses browser location when you press `Locate`.
 - Remembers the last saved home location after `Locate` or a manual coordinate refresh.
 - Refreshes automatically every 60 seconds for wall-mounted use.

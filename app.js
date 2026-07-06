@@ -20,6 +20,9 @@ const elements = {
   nearest: document.querySelector("#nearestPlane"),
   updated: document.querySelector("#lastUpdated"),
   specialCount: document.querySelector("#specialCount"),
+  airAmbulanceAlert: document.querySelector("#airAmbulanceAlert"),
+  airAmbulanceAlertTitle: document.querySelector("#airAmbulanceAlertTitle"),
+  airAmbulanceAlertText: document.querySelector("#airAmbulanceAlertText"),
   source: document.querySelector("#sourcePill"),
   center: document.querySelector("#centerCoords"),
   map: document.querySelector("#mapView"),
@@ -117,6 +120,9 @@ let state = {
   planeMarkers: [],
   trackLines: [],
   trackHistory: new Map(),
+  selectedAircraftKey: "",
+  airAmbulanceAlerted: new Set(),
+  lastAirAmbulance: null,
   weather: [],
   weatherUpdatedAt: null,
   bitcoin: null,
@@ -201,6 +207,36 @@ const demoAircraft = [
   },
 ];
 
+const airAmbulanceWaypoints = {
+  rcht: { label: "RCHT", detail: "Royal Cornwall Hospital, Truro", lat: 50.2668, lon: -5.0946 },
+  derriford: { label: "Derriford Hospital", detail: "Plymouth", lat: 50.4169, lon: -4.1136 },
+  base: { label: "Newquay base", detail: "Cornwall Air Ambulance base", lat: 50.4406, lon: -4.9954 },
+};
+
+const localPlaces = [
+  { name: "Newquay", lat: 50.4155, lon: -5.0737 },
+  { name: "Truro", lat: 50.2632, lon: -5.051 },
+  { name: "Treliske", lat: 50.2668, lon: -5.0946 },
+  { name: "Falmouth", lat: 50.1526, lon: -5.0663 },
+  { name: "Camborne", lat: 50.213, lon: -5.3007 },
+  { name: "Redruth", lat: 50.2332, lon: -5.2267 },
+  { name: "St Austell", lat: 50.3383, lon: -4.7931 },
+  { name: "Bodmin", lat: 50.4715, lon: -4.7243 },
+  { name: "Liskeard", lat: 50.4542, lon: -4.4652 },
+  { name: "Launceston", lat: 50.6369, lon: -4.3601 },
+  { name: "Penzance", lat: 50.1188, lon: -5.5376 },
+  { name: "Helston", lat: 50.1028, lon: -5.2709 },
+  { name: "St Ives", lat: 50.2084, lon: -5.4909 },
+  { name: "Hayle", lat: 50.1855, lon: -5.4213 },
+  { name: "Padstow", lat: 50.5389, lon: -4.9361 },
+  { name: "Wadebridge", lat: 50.5168, lon: -4.8366 },
+  { name: "Bude", lat: 50.8289, lon: -4.5446 },
+  { name: "Plymouth", lat: 50.3755, lon: -4.1427 },
+  { name: "Derriford", lat: 50.4169, lon: -4.1136 },
+  { name: "Saltash", lat: 50.4096, lon: -4.2251 },
+  { name: "Tavistock", lat: 50.5494, lon: -4.1442 },
+];
+
 function milesToNauticalMiles(miles) {
   return miles / 1.15078;
 }
@@ -270,7 +306,11 @@ function escapeHtml(value) {
 
 function loadSavedPosition() {
   try {
-    const saved = JSON.parse(window.localStorage.getItem("planesNearbyHome") || "null");
+    const saved = JSON.parse(
+      window.localStorage.getItem("skyWatchHome") ||
+        window.localStorage.getItem("planesNearbyHome") ||
+        "null",
+    );
     if (Number.isFinite(saved?.lat) && Number.isFinite(saved?.lon)) {
       const isOldFallback =
         Math.abs(saved.lat - fallbackPosition.lat) < 0.0001 &&
@@ -286,7 +326,13 @@ function loadSavedPosition() {
 
 function savePosition(position) {
   try {
-    window.localStorage.setItem("planesNearbyHome", JSON.stringify(position));
+    const saved = JSON.stringify({
+      lat: Number(position.lat),
+      lon: Number(position.lon),
+      savedAt: Date.now(),
+    });
+    window.localStorage.setItem("skyWatchHome", saved);
+    window.localStorage.setItem("planesNearbyHome", saved);
   } catch (error) {
     console.warn(error);
   }
@@ -335,7 +381,9 @@ function renderTicker() {
 
   const special = state.filtered.find((aircraft) => aircraft.specialReason);
   if (special) {
-    items.push(`${special.specialReason} nearby: ${special.flight} ${formatDistance(special.distance)} away`);
+    items.push(special.airAmbulanceStatus || `${special.specialReason} nearby: ${special.flight} ${formatDistance(special.distance)} away`);
+  } else if (state.lastAirAmbulance && Date.now() - state.lastAirAmbulance.seenAt < 15 * 60 * 1000) {
+    items.push(`Air ambulance last seen ${placePhrase(state.lastAirAmbulance.aircraft)}`);
   }
 
   for (const item of state.news.slice(0, 3)) {
@@ -601,9 +649,77 @@ function movementStatus(aircraft) {
   return "Passing nearby";
 }
 
+function isAirAmbulance(aircraft) {
+  return specialAircraftReason(aircraft) === "Air ambulance";
+}
+
+function nearestPlace(lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return { name: "unknown area", distance: Number.NaN };
+  return localPlaces
+    .map((place) => ({
+      ...place,
+      distance: distanceFromCoords({ lat, lon }, place),
+    }))
+    .sort((a, b) => a.distance - b.distance)[0];
+}
+
+function placePhrase(aircraft) {
+  const place = nearestPlace(aircraft.lat, aircraft.lon);
+  if (!place) return "currently over unknown area";
+  return place.distance <= 3 ? `currently over ${place.name}` : `near ${place.name}`;
+}
+
+function isLandedAircraft(aircraft) {
+  const altitude = Number(aircraft.altitude);
+  const speed = Number(aircraft.speed);
+  return aircraft.altitude === "ground" || aircraft.altitude === "on_ground" || (Number.isFinite(altitude) && altitude < 350 && (!Number.isFinite(speed) || speed < 45));
+}
+
+function headingToTarget(aircraft, target, tolerance = 38) {
+  const heading = Number(aircraft.heading);
+  if (!Number.isFinite(heading) || !Number.isFinite(aircraft.lat) || !Number.isFinite(aircraft.lon)) return false;
+  const targetBearing = bearingBetween(aircraft.lat, aircraft.lon, target.lat, target.lon);
+  return angleDelta(heading, targetBearing) <= tolerance;
+}
+
+function airAmbulanceTrackingStatus(aircraft) {
+  if (!aircraft || !isAirAmbulance(aircraft)) return "";
+  const place = placePhrase(aircraft);
+  const userDistance = Number(aircraft.distance);
+
+  if (isLandedAircraft(aircraft)) {
+    const nearest = nearestPlace(aircraft.lat, aircraft.lon);
+    return `Air Ambulance landed ${nearest?.name ? `near ${nearest.name}` : "near last known position"}`;
+  }
+
+  if (Number.isFinite(userDistance) && userDistance <= 3) {
+    return `Air Ambulance within 3 miles - ${place}`;
+  }
+
+  if (state.userPosition && headingToTarget(aircraft, state.userPosition, 44) && Number.isFinite(userDistance) && userDistance <= 30) {
+    return `Heading your way - ${place}`;
+  }
+
+  const targetOrder = [
+    { target: airAmbulanceWaypoints.rcht, text: "Heading towards RCHT" },
+    { target: airAmbulanceWaypoints.derriford, text: "Heading towards Derriford Hospital" },
+    { target: airAmbulanceWaypoints.base, text: "Heading back to base" },
+  ];
+
+  for (const item of targetOrder) {
+    const distance = distanceFromCoords({ lat: aircraft.lat, lon: aircraft.lon }, item.target);
+    if (distance <= 2.5) return `${item.text} - ${place}`;
+    if (headingToTarget(aircraft, item.target)) return `${item.text} - ${place}`;
+  }
+
+  return `${movementStatus(aircraft)} - ${place}`;
+}
+
 function specialAircraftReason(aircraft) {
   const text = [
     aircraft.flight,
+    aircraft.registration,
+    aircraft.id,
     aircraft.airline,
     aircraft.aircraftType,
     aircraft.from,
@@ -616,7 +732,7 @@ function specialAircraftReason(aircraft) {
     text.includes("cornwall air ambulance") ||
     text.includes("air ambulance") ||
     text.includes("helimed") ||
-    /^HLE\d|^HELIMED|^G-CRWL|^G-CIOS/.test(flight)
+    /^HLE\d|^HELIMED|^G-CRWL|^G-CNLL|^G-CIOS/.test(flight)
   ) {
     return "Air ambulance";
   }
@@ -644,10 +760,14 @@ function specialAircraftReason(aircraft) {
 
 function decorateAircraft(aircraft) {
   const specialReason = specialAircraftReason(aircraft);
-  return {
+  const decorated = {
     ...aircraft,
     specialReason,
     status: movementStatus(aircraft),
+  };
+  return {
+    ...decorated,
+    airAmbulanceStatus: specialReason === "Air ambulance" ? airAmbulanceTrackingStatus(decorated) : "",
   };
 }
 
@@ -662,7 +782,9 @@ function bearingBetween(fromLat, fromLon, toLat, toLon) {
 }
 
 function normalizeAircraft(item, origin) {
-  const flight = String(item.flight || item.callsign || item.r || item.hex || "Unknown").trim();
+  const flight = [item.flight, item.callsign, item.r, item.registration, item.hex]
+    .map((value) => String(value || "").trim())
+    .find(Boolean) || "Unknown";
   const lat = Number(item.lat);
   const lon = Number(item.lon);
   const distanceNm = Number(item.dst ?? item.dist ?? item.distance);
@@ -682,6 +804,7 @@ function normalizeAircraft(item, origin) {
     lat,
     lon,
     id: item.hex || item.icao || flight,
+    registration: item.r || item.registration,
   });
 }
 
@@ -764,7 +887,7 @@ function initMap() {
       boxZoom: false,
       keyboard: false,
       zoomControl: false,
-      tap: false,
+      tap: true,
     }).setView([state.userPosition.lat, state.userPosition.lon], 8);
 
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -831,8 +954,36 @@ function rememberTracks(aircraftList) {
 
 function markerLabel(aircraft) {
   const distance = formatDistance(aircraft.distance);
+  if (aircraft.airAmbulanceStatus) return `${aircraft.flight} · ${aircraft.airAmbulanceStatus}`;
   if (aircraft.specialReason) return `${aircraft.specialReason}: ${aircraft.flight} · ${distance}`;
   return `${aircraft.flight} · ${distance}`;
+}
+
+function aircraftPopupHtml(aircraft) {
+  return `
+    <div class="aircraft-popup">
+      <strong>${escapeHtml(aircraft.flight)}</strong>
+      <span>${escapeHtml(aircraft.airAmbulanceStatus || aircraft.specialReason || aircraft.status || "Live track")}</span>
+      <dl>
+        <div><dt>Airline</dt><dd>${escapeHtml(aircraft.airline || "Unknown")}</dd></div>
+        <div><dt>Type</dt><dd>${escapeHtml(aircraft.aircraftType || "Type unknown")}</dd></div>
+        <div><dt>Altitude</dt><dd>${escapeHtml(formatAltitude(aircraft.altitude))}</dd></div>
+        <div><dt>Speed</dt><dd>${escapeHtml(formatSpeed(aircraft.speed))}</dd></div>
+        <div><dt>Range</dt><dd>${escapeHtml(formatDistance(aircraft.distance))}</dd></div>
+        <div><dt>Bearing</dt><dd>${escapeHtml(formatDirection(aircraft.bearing))}</dd></div>
+        <div><dt>From</dt><dd>${escapeHtml(aircraft.from || "Route data needed")}</dd></div>
+        <div><dt>To</dt><dd>${escapeHtml(aircraft.to || "Route data needed")}</dd></div>
+      </dl>
+    </div>
+  `;
+}
+
+function selectAircraft(aircraft) {
+  state.selectedAircraftKey = aircraftKey(aircraft);
+  const index = state.filtered.findIndex((item) => aircraftKey(item) === state.selectedAircraftKey);
+  if (index >= 0) state.spotlightIndex = Math.min(index, 2);
+  elements.mapLabel.textContent = aircraft.specialReason ? `Tracking ${aircraft.specialReason}` : `Track ${aircraft.flight}`;
+  renderSpotlight();
 }
 
 function updateMap() {
@@ -902,8 +1053,16 @@ function updateMap() {
       const marker = L.marker([aircraft.lat, aircraft.lon], {
         icon: aircraftIcon(aircraft),
         rotationAngle: aircraft.heading || 0,
-        interactive: false,
+        interactive: true,
+        keyboard: true,
+        title: markerLabel(aircraft),
       }).addTo(state.map);
+      marker.bindPopup(aircraftPopupHtml(aircraft), {
+        closeButton: true,
+        className: "radar-popup",
+        maxWidth: 320,
+      });
+      marker.on("click", () => selectAircraft(aircraft));
       if (aircraft.specialReason || aircraft === tracked) {
         marker.bindTooltip(markerLabel(aircraft), {
           permanent: true,
@@ -946,7 +1105,7 @@ function renderTable() {
     tr.classList.toggle("special-row", Boolean(aircraft.specialReason));
     tr.innerHTML = `
       <td><span class="airline-logo" aria-label="${aircraft.airline} logo">${branding.label}</span></td>
-      <td><span class="flight">${aircraft.flight}</span><span class="subtle">${aircraft.specialReason || aircraft.status}</span></td>
+      <td><span class="flight">${aircraft.flight}</span><span class="subtle">${aircraft.airAmbulanceStatus || aircraft.specialReason || aircraft.status}</span></td>
       <td>${aircraft.airline}</td>
       <td>${aircraft.aircraftType || "Type unknown"}</td>
       <td>${formatAltitude(aircraft.altitude)}</td>
@@ -976,6 +1135,7 @@ function renderStats() {
     elements.center.textContent = `${state.userPosition.lat.toFixed(4)}, ${state.userPosition.lon.toFixed(4)}`;
   }
   renderSpotlight();
+  renderAirAmbulanceAlert();
   renderTicker();
 }
 
@@ -983,7 +1143,10 @@ function renderSpotlight() {
   const specialList = state.filtered.filter((aircraft) => aircraft.specialReason).sort((a, b) => a.distance - b.distance);
   const regularList = state.filtered.filter((aircraft) => !aircraft.specialReason).sort((a, b) => a.distance - b.distance);
   const spotlightList = [...specialList, ...regularList].slice(0, 3);
-  const aircraft = spotlightList[state.spotlightIndex] || spotlightList[0];
+  const selectedAircraft = state.selectedAircraftKey
+    ? state.filtered.find((item) => aircraftKey(item) === state.selectedAircraftKey)
+    : null;
+  const aircraft = selectedAircraft || spotlightList[state.spotlightIndex] || spotlightList[0];
   if (!aircraft) {
     elements.spotlightLogo.textContent = "--";
     elements.spotlightLogo.style.setProperty("--logo-a", "#4d5b55");
@@ -1011,7 +1174,7 @@ function renderSpotlight() {
     ? `${aircraft.specialReason} priority watch`
     : aircraft.airline;
   elements.spotlightStatus.textContent = aircraft.specialReason
-    ? `${aircraft.specialReason} · ${aircraft.status}`
+    ? aircraft.airAmbulanceStatus || `${aircraft.specialReason} · ${aircraft.status}`
     : aircraft.status;
   elements.spotlightStatus.className = `spotlight-status${aircraft.specialReason ? " special" : ""}`;
   elements.spotlightFrom.textContent = aircraft.from;
@@ -1032,6 +1195,45 @@ function updateHighlights() {
     if (Number.isFinite(altitude) && altitude > 0) {
       state.lowestToday = state.lowestToday == null ? altitude : Math.min(state.lowestToday, altitude);
     }
+  }
+}
+
+function activeAirAmbulance() {
+  return state.aircraft
+    .filter((aircraft) => aircraft.specialReason === "Air ambulance")
+    .sort((a, b) => a.distance - b.distance)[0] || null;
+}
+
+function playUrgentChime() {
+  if (!state.chimeEnabled || !state.audioContext) return;
+  const now = state.audioContext.currentTime;
+  for (const [index, frequency] of [988, 1319, 1760, 1319].entries()) {
+    const oscillator = state.audioContext.createOscillator();
+    const gain = state.audioContext.createGain();
+    oscillator.type = "square";
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0, now + index * 0.12);
+    gain.gain.linearRampToValueAtTime(0.075, now + index * 0.12 + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.12 + 0.11);
+    oscillator.connect(gain).connect(state.audioContext.destination);
+    oscillator.start(now + index * 0.12);
+    oscillator.stop(now + index * 0.12 + 0.13);
+  }
+}
+
+function renderAirAmbulanceAlert() {
+  const aircraft = activeAirAmbulance();
+  const inRange = aircraft && Number.isFinite(aircraft.distance) && aircraft.distance <= 3;
+  elements.airAmbulanceAlert.hidden = !inRange;
+  elements.airAmbulanceAlert.classList.toggle("active", Boolean(inRange));
+  if (!inRange) return;
+
+  elements.airAmbulanceAlertTitle.textContent = "Air Ambulance close";
+  elements.airAmbulanceAlertText.textContent = `${aircraft.flight} ${formatDistance(aircraft.distance)} away - ${aircraft.airAmbulanceStatus || placePhrase(aircraft)}`;
+  const key = `${aircraftKey(aircraft)}:within-3`;
+  if (!state.airAmbulanceAlerted.has(key)) {
+    state.airAmbulanceAlerted.add(key);
+    playUrgentChime();
   }
 }
 
@@ -1289,6 +1491,8 @@ async function refreshAircraft() {
 
   const result = await fetchAircraft(state.userPosition, radius);
   state.aircraft = result.aircraft.map(decorateAircraft).filter((aircraft) => aircraft.distance <= radius);
+  const ambulance = activeAirAmbulance();
+  if (ambulance) state.lastAirAmbulance = { aircraft: ambulance, seenAt: Date.now() };
   rememberTracks(state.aircraft);
   updateHighlights();
   state.loading = false;
@@ -1315,6 +1519,7 @@ function locateUser() {
       elements.lon.value = position.coords.longitude.toFixed(5);
       savePosition({ lat: Number(elements.lat.value), lon: Number(elements.lon.value) });
       state.locationMode = "saved home";
+      setMessage("Base position saved on this device.", true);
       refreshAircraft();
     },
     () => {
@@ -1338,6 +1543,7 @@ elements.refresh.addEventListener("click", () => {
   if (Number.isFinite(lat) && Number.isFinite(lon)) {
     savePosition({ lat, lon });
     state.locationMode = "saved home";
+    setMessage("Base position saved on this device.", true);
   }
   refreshAircraft();
 });
