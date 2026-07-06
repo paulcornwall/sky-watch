@@ -35,6 +35,9 @@ The app:
 - Tracks closest aircraft today and lowest altitude seen.
 - Highlights air ambulance, Coastguard, rescue and military aircraft.
 - Includes an optional chime for special aircraft. It only sounds after `Chime on` is tapped.
+- Includes a discreet test alert button so you can check the air ambulance alert on the wall display.
+- Keeps an always-visible Air Ambulance Watch tile, even when the aircraft is not currently airborne.
+- Keeps a 48 hour on-device log of military aircraft seen within 5 miles.
 - Uses offline airline colour badges so the display still works without logo downloads.
 - Keeps a compact real map/radar view with darkened OpenStreetMap tiles, animated scan effects, range rings, compass labels, a legend and aircraft markers.
 - Auto-tracks air ambulance, Coastguard and military aircraft on the map with stronger labels and short movement trails.

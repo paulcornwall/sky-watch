@@ -6,6 +6,7 @@ const elements = {
   refresh: document.querySelector("#refreshButton"),
   kiosk: document.querySelector("#kioskButton"),
   chime: document.querySelector("#chimeButton"),
+  testAlert: document.querySelector("#testAlertButton"),
   localDay: document.querySelector("#localDay"),
   localDate: document.querySelector("#localDate"),
   localTime: document.querySelector("#localTime"),
@@ -20,6 +21,10 @@ const elements = {
   nearest: document.querySelector("#nearestPlane"),
   updated: document.querySelector("#lastUpdated"),
   specialCount: document.querySelector("#specialCount"),
+  airAmbulanceWatch: document.querySelector("#airAmbulanceWatch"),
+  airAmbulanceWatchText: document.querySelector("#airAmbulanceWatchText"),
+  militaryLogCount: document.querySelector("#militaryLogCount"),
+  militaryLogText: document.querySelector("#militaryLogText"),
   airAmbulanceAlert: document.querySelector("#airAmbulanceAlert"),
   airAmbulanceAlertTitle: document.querySelector("#airAmbulanceAlertTitle"),
   airAmbulanceAlertText: document.querySelector("#airAmbulanceAlertText"),
@@ -123,6 +128,8 @@ let state = {
   selectedAircraftKey: "",
   airAmbulanceAlerted: new Set(),
   lastAirAmbulance: null,
+  testAlertUntil: 0,
+  militaryLog: loadMilitaryLog(),
   weather: [],
   weatherUpdatedAt: null,
   bitcoin: null,
@@ -338,6 +345,53 @@ function savePosition(position) {
   }
 }
 
+function loadMilitaryLog() {
+  try {
+    const entries = JSON.parse(window.localStorage.getItem("skyWatchMilitaryLog") || "[]");
+    if (Array.isArray(entries)) return pruneMilitaryLog(entries);
+  } catch (error) {
+    console.warn(error);
+  }
+  return [];
+}
+
+function pruneMilitaryLog(entries) {
+  const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+  return entries.filter((entry) => Number(entry.time) >= cutoff);
+}
+
+function saveMilitaryLog() {
+  try {
+    window.localStorage.setItem("skyWatchMilitaryLog", JSON.stringify(state.militaryLog));
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+function updateMilitaryLog() {
+  state.militaryLog = pruneMilitaryLog(state.militaryLog);
+  const nearbyMilitary = state.aircraft.filter(
+    (aircraft) => aircraft.specialReason === "Military" && Number.isFinite(aircraft.distance) && aircraft.distance <= 5,
+  );
+
+  for (const aircraft of nearbyMilitary) {
+    const key = `${aircraftKey(aircraft)}:${new Date().toISOString().slice(0, 13)}`;
+    if (state.militaryLog.some((entry) => entry.key === key)) continue;
+    state.militaryLog.unshift({
+      key,
+      time: Date.now(),
+      flight: aircraft.flight,
+      service: displayServiceName(aircraft),
+      distance: aircraft.distance,
+      altitude: aircraft.altitude,
+      status: aircraft.status,
+    });
+  }
+
+  state.militaryLog = state.militaryLog.slice(0, 30);
+  saveMilitaryLog();
+}
+
 function rainWindow() {
   const rainHours = state.weather.filter((hour) => hour.rainAmount > 0.1 || hour.rainChance >= 40);
   const firstRain = rainHours[0];
@@ -384,6 +438,11 @@ function renderTicker() {
     items.push(special.airAmbulanceStatus || `${special.specialReason} nearby: ${special.flight} ${formatDistance(special.distance)} away`);
   } else if (state.lastAirAmbulance && Date.now() - state.lastAirAmbulance.seenAt < 15 * 60 * 1000) {
     items.push(`Air ambulance last seen ${placePhrase(state.lastAirAmbulance.aircraft)}`);
+  }
+
+  if (state.militaryLog[0]) {
+    const latest = state.militaryLog[0];
+    items.push(`Military log: ${latest.flight} within ${formatDistance(Number(latest.distance))} ${formatAge(latest.time)}`);
   }
 
   for (const item of state.news.slice(0, 3)) {
@@ -630,6 +689,21 @@ function brandingForFlight(flight) {
   const prefix = airlineCodeFromFlight(flight);
   const fallback = String(flight || "?").replace(/[^A-Z0-9]/gi, "").slice(0, 2).toUpperCase() || "??";
   return airlineBranding[prefix] || { label: fallback, colors: ["#4d5b55", "#9fb4aa"] };
+}
+
+function displayServiceName(aircraft) {
+  if (!aircraft) return "No aircraft in range";
+  if (aircraft.specialReason === "Air ambulance") return "Cornwall Air Ambulance";
+  if (aircraft.specialReason === "Coastguard") return "Coastguard Rescue";
+  if (aircraft.specialReason === "Military") return aircraft.airline && aircraft.airline !== "Unknown airline" ? aircraft.airline : "Military aircraft";
+  return aircraft.airline && aircraft.airline !== "Unknown airline" ? aircraft.airline : aircraft.flight;
+}
+
+function mapHeading(aircraft) {
+  const heading = Number(aircraft.heading);
+  if (Number.isFinite(heading) && heading > 0) return heading;
+  const bearing = Number(aircraft.bearing);
+  return Number.isFinite(bearing) ? bearing : 0;
 }
 
 function angleDelta(a, b) {
@@ -905,13 +979,13 @@ function initMap() {
 }
 
 function aircraftIcon(aircraft) {
-  const label = aircraft.specialReason ? "!" : "✈";
   const reasonClass = aircraft.specialReason ? aircraft.specialReason.toLowerCase().replace(/[^a-z0-9]+/g, "-") : "";
+  const heading = mapHeading(aircraft);
   return L.divIcon({
     className: "",
-    html: `<span class="plane-map-marker${aircraft.specialReason ? ` special ${reasonClass}` : ""}">${label}</span>`,
-    iconSize: aircraft.specialReason ? [30, 30] : [22, 22],
-    iconAnchor: aircraft.specialReason ? [15, 15] : [11, 11],
+    html: `<span class="plane-map-marker${aircraft.specialReason ? ` special ${reasonClass}` : ""}" style="--heading:${heading}deg"><span class="plane-shape"></span></span>`,
+    iconSize: aircraft.specialReason ? [34, 34] : [28, 28],
+    iconAnchor: aircraft.specialReason ? [17, 17] : [14, 14],
   });
 }
 
@@ -1052,7 +1126,6 @@ function updateMap() {
     .map((aircraft) => {
       const marker = L.marker([aircraft.lat, aircraft.lon], {
         icon: aircraftIcon(aircraft),
-        rotationAngle: aircraft.heading || 0,
         interactive: true,
         keyboard: true,
         title: markerLabel(aircraft),
@@ -1135,6 +1208,8 @@ function renderStats() {
     elements.center.textContent = `${state.userPosition.lat.toFixed(4)}, ${state.userPosition.lon.toFixed(4)}`;
   }
   renderSpotlight();
+  renderAirAmbulanceWatch();
+  renderMilitaryLog();
   renderAirAmbulanceAlert();
   renderTicker();
 }
@@ -1152,7 +1227,7 @@ function renderSpotlight() {
     elements.spotlightLogo.style.setProperty("--logo-a", "#4d5b55");
     elements.spotlightLogo.style.setProperty("--logo-b", "#9fb4aa");
     elements.spotlightFlight.textContent = "No aircraft in range";
-    elements.spotlightAirline.textContent = "Try a larger radius or refresh again";
+    elements.spotlightAirline.textContent = "Callsign standby";
     elements.spotlightStatus.textContent = "No movement";
     elements.spotlightStatus.className = "spotlight-status";
     elements.spotlightFrom.textContent = "From unknown";
@@ -1169,10 +1244,8 @@ function renderSpotlight() {
   elements.spotlightLogo.textContent = branding.label;
   elements.spotlightLogo.style.setProperty("--logo-a", branding.colors[0]);
   elements.spotlightLogo.style.setProperty("--logo-b", branding.colors[1]);
-  elements.spotlightFlight.textContent = aircraft.flight;
-  elements.spotlightAirline.textContent = aircraft.specialReason
-    ? `${aircraft.specialReason} priority watch`
-    : aircraft.airline;
+  elements.spotlightFlight.textContent = displayServiceName(aircraft);
+  elements.spotlightAirline.textContent = `Callsign ${aircraft.flight}`;
   elements.spotlightStatus.textContent = aircraft.specialReason
     ? aircraft.airAmbulanceStatus || `${aircraft.specialReason} · ${aircraft.status}`
     : aircraft.status;
@@ -1204,6 +1277,33 @@ function activeAirAmbulance() {
     .sort((a, b) => a.distance - b.distance)[0] || null;
 }
 
+function renderAirAmbulanceWatch() {
+  const aircraft = activeAirAmbulance();
+  if (aircraft) {
+    elements.airAmbulanceWatch.textContent = "Airborne";
+    elements.airAmbulanceWatchText.textContent = aircraft.airAmbulanceStatus || `${aircraft.flight} ${formatDistance(aircraft.distance)}`;
+    return;
+  }
+
+  if (state.lastAirAmbulance && Date.now() - state.lastAirAmbulance.seenAt < 15 * 60 * 1000) {
+    elements.airAmbulanceWatch.textContent = "Last seen";
+    elements.airAmbulanceWatchText.textContent = placePhrase(state.lastAirAmbulance.aircraft);
+    return;
+  }
+
+  elements.airAmbulanceWatch.textContent = "Standby";
+  elements.airAmbulanceWatchText.textContent = "air ambulance watch";
+}
+
+function renderMilitaryLog() {
+  state.militaryLog = pruneMilitaryLog(state.militaryLog);
+  elements.militaryLogCount.textContent = state.militaryLog.length.toLocaleString();
+  const latest = state.militaryLog[0];
+  elements.militaryLogText.textContent = latest
+    ? `${latest.flight} ${formatDistance(Number(latest.distance))} · ${formatAge(latest.time)}`
+    : "military within 5 mi";
+}
+
 function playUrgentChime() {
   if (!state.chimeEnabled || !state.audioContext) return;
   const now = state.audioContext.currentTime;
@@ -1224,8 +1324,14 @@ function playUrgentChime() {
 function renderAirAmbulanceAlert() {
   const aircraft = activeAirAmbulance();
   const inRange = aircraft && Number.isFinite(aircraft.distance) && aircraft.distance <= 3;
-  elements.airAmbulanceAlert.hidden = !inRange;
-  elements.airAmbulanceAlert.classList.toggle("active", Boolean(inRange));
+  const testActive = Date.now() < state.testAlertUntil;
+  elements.airAmbulanceAlert.hidden = !(inRange || testActive);
+  elements.airAmbulanceAlert.classList.toggle("active", Boolean(inRange || testActive));
+  if (testActive && !inRange) {
+    elements.airAmbulanceAlertTitle.textContent = "Test alert";
+    elements.airAmbulanceAlertText.textContent = "Air ambulance alert display and chime test";
+    return;
+  }
   if (!inRange) return;
 
   elements.airAmbulanceAlertTitle.textContent = "Air Ambulance close";
@@ -1235,6 +1341,12 @@ function renderAirAmbulanceAlert() {
     state.airAmbulanceAlerted.add(key);
     playUrgentChime();
   }
+}
+
+function testAirAmbulanceAlert() {
+  state.testAlertUntil = Date.now() + 12000;
+  playUrgentChime();
+  renderAirAmbulanceAlert();
 }
 
 function toggleKiosk() {
@@ -1493,6 +1605,7 @@ async function refreshAircraft() {
   state.aircraft = result.aircraft.map(decorateAircraft).filter((aircraft) => aircraft.distance <= radius);
   const ambulance = activeAirAmbulance();
   if (ambulance) state.lastAirAmbulance = { aircraft: ambulance, seenAt: Date.now() };
+  updateMilitaryLog();
   rememberTracks(state.aircraft);
   updateHighlights();
   state.loading = false;
@@ -1549,6 +1662,7 @@ elements.refresh.addEventListener("click", () => {
 });
 elements.kiosk.addEventListener("click", toggleKiosk);
 elements.chime.addEventListener("click", toggleChime);
+elements.testAlert.addEventListener("click", testAirAmbulanceAlert);
 elements.radius.addEventListener("change", refreshAircraft);
 elements.filter.addEventListener("input", applyFilter);
 window.addEventListener("resize", drawRadar);
