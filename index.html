@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sky Watch</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="kiosk-mode">
+    <main class="app-shell">
+      <section class="control-band" aria-label="Aircraft search controls">
+        <div>
+          <p class="eyebrow">ADS-B terminal // live radius</p>
+          <h1>Sky Watch</h1>
+        </div>
+        <div class="ticker-panel" aria-label="Live alert ticker">
+          <div class="ticker-label">Signal feed</div>
+          <div class="ticker-window">
+            <div class="ticker-track" id="tickerTrack">
+              <span>Checking rain, aircraft and market alerts</span>
+            </div>
+          </div>
+        </div>
+        <div class="datetime-panel" aria-label="Local date and time">
+          <span id="localDay">Sunday</span>
+          <strong id="localTime">--:--</strong>
+          <span id="localDate">5 July 2026</span>
+        </div>
+        <div class="kiosk-actions">
+          <button id="chimeButton" class="alert-toggle" type="button" title="Toggle special aircraft chime">
+            <span aria-hidden="true">♪</span>
+            Chime off
+          </button>
+          <button id="kioskButton" type="button" title="Show or hide controls">
+            <span aria-hidden="true">☰</span>
+            Controls
+          </button>
+        </div>
+        <div class="controls">
+          <label>
+            Radius
+            <select id="radiusSelect">
+              <option value="10">10 miles</option>
+              <option value="25">25 miles</option>
+              <option value="50" selected>50 miles</option>
+              <option value="100">100 miles</option>
+            </select>
+          </label>
+          <label>
+            Latitude
+            <input id="latInput" type="number" step="0.0001" inputmode="decimal" />
+          </label>
+          <label>
+            Longitude
+            <input id="lonInput" type="number" step="0.0001" inputmode="decimal" />
+          </label>
+          <button id="locateButton" type="button" title="Use my location">
+            <span aria-hidden="true">⌖</span>
+            Locate
+          </button>
+          <button id="refreshButton" type="button" title="Refresh aircraft">
+            <span aria-hidden="true">↻</span>
+            Refresh
+          </button>
+        </div>
+      </section>
+
+      <section class="status-strip" aria-live="polite">
+        <div class="rain-status-tile">
+          <div class="rain-alert" id="rainAlert">
+            <div class="rain-icon" aria-hidden="true">
+              <span class="cloud"></span>
+              <span class="drop one"></span>
+              <span class="drop two"></span>
+              <span class="drop three"></span>
+            </div>
+            <div>
+              <strong id="rainAlertTitle">Rain watch</strong>
+              <span id="rainAlertText">Checking next 12 hours</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <span class="metric" id="aircraftCount">0</span>
+          <span>tracks locked</span>
+        </div>
+        <div>
+          <span class="metric" id="nearestPlane">--</span>
+          <span>nearest</span>
+        </div>
+        <div>
+          <span class="metric" id="lastUpdated">Not loaded</span>
+          <span>updated</span>
+        </div>
+        <div>
+          <span class="metric" id="specialCount">0</span>
+          <span>priority watch</span>
+        </div>
+      </section>
+
+      <section class="spotlight-band" aria-label="Priority aircraft spotlight">
+        <div class="spotlight-card">
+          <div class="spotlight-topline">
+            <span class="airline-logo spotlight-logo" id="spotlightLogo">--</span>
+            <div>
+              <p class="eyebrow">Priority / nearest track</p>
+              <h2 id="spotlightFlight">Waiting for aircraft</h2>
+              <p id="spotlightAirline" class="spotlight-airline">Refresh to load nearby flights</p>
+              <p id="spotlightStatus" class="spotlight-status">Waiting for movement</p>
+            </div>
+          </div>
+          <div class="route-line">
+            <span id="spotlightFrom">From unknown</span>
+            <span aria-hidden="true">→</span>
+            <span id="spotlightTo">To unknown</span>
+          </div>
+          <div class="spotlight-metrics">
+            <div>
+              <span id="spotlightDistance">--</span>
+              <small>range</small>
+            </div>
+            <div>
+              <span id="spotlightDirection">--</span>
+              <small>direction</small>
+            </div>
+            <div>
+              <span id="spotlightAltitude">--</span>
+              <small>altitude</small>
+            </div>
+            <div>
+              <span id="spotlightSpeed">--</span>
+              <small>speed</small>
+            </div>
+            <div>
+              <span id="spotlightType">--</span>
+              <small>airframe</small>
+            </div>
+          </div>
+          <div class="highlights">
+            <div>
+              <span id="closestToday">--</span>
+              <small>closest today</small>
+            </div>
+            <div>
+              <span id="lowestToday">--</span>
+              <small>lowest seen</small>
+            </div>
+            <div>
+              <span id="sourcePill">Standby</span>
+              <small>source</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="radar-panel" aria-label="Compact compass display">
+          <div id="mapView" class="map-view" aria-hidden="true"></div>
+          <canvas id="radarCanvas" width="720" height="720"></canvas>
+          <div class="map-header">
+            <span id="mapLabel">Live sector map</span>
+            <strong id="mapRangeLabel">50 mi radius</strong>
+          </div>
+          <div class="compass-label north">N</div>
+          <div class="compass-label east">E</div>
+          <div class="compass-label south">S</div>
+          <div class="compass-label west">W</div>
+          <div class="map-legend">
+            <span><i class="legend-home"></i>Base</span>
+            <span><i class="legend-plane"></i>Track</span>
+            <span><i class="legend-special"></i>Priority</span>
+          </div>
+          <div class="radar-center">
+            <strong>Base station</strong>
+            <span id="centerCoords">Set a location</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <section class="table-panel" aria-label="Nearby aircraft">
+          <div class="table-heading">
+            <h2>Aircraft</h2>
+            <input id="filterInput" type="search" placeholder="Filter flight, airline or route" />
+          </div>
+          <div id="message" class="message">
+            Use Locate or enter coordinates, then refresh.
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Logo</th>
+                  <th>Flight</th>
+                  <th>Airline</th>
+                  <th>Aircraft</th>
+                  <th>Height</th>
+                  <th>Speed</th>
+                  <th>From</th>
+                  <th>To</th>
+                  <th>Distance</th>
+                </tr>
+              </thead>
+              <tbody id="aircraftRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <footer class="developer-credit">Developed by Paul May</footer>
+    </main>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+    <script src="./app.js" defer></script>
+  </body>
+</html>
