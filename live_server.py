@@ -93,6 +93,8 @@ class LiveFeedHandler(SimpleHTTPRequestHandler):
                 self.handle_route(params)
             elif parsed.path == "/api/weather":
                 self.handle_weather(params)
+            elif parsed.path == "/api/postcode":
+                self.handle_postcode(params)
             elif parsed.path == "/api/bitcoin":
                 self.handle_bitcoin()
             elif parsed.path == "/api/news":
@@ -134,9 +136,46 @@ class LiveFeedHandler(SimpleHTTPRequestHandler):
             json_response(self, {"error": "callsign is required"}, 400)
             return
 
+        aviationstack_key = os.environ.get("AVIATIONSTACK_API_KEY", "").strip()
+        if aviationstack_key:
+            endpoint = (
+                "http://api.aviationstack.com/v1/flights?"
+                f"access_key={aviationstack_key}&flight_icao={callsign}"
+            )
+            try:
+                data = cached(f"route:aviationstack:{callsign}", CACHE_SECONDS["route"], lambda: fetch_json(endpoint))
+                if data.get("data"):
+                    json_response(self, {"source": "aviationstack.com", "data": data})
+                    return
+            except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+                pass
+
         endpoint = f"https://api.adsbdb.com/v0/callsign/{callsign}"
         data = cached(f"route:{callsign}", CACHE_SECONDS["route"], lambda: fetch_json(endpoint))
         json_response(self, {"source": "adsbdb.com", "data": data})
+
+    def handle_postcode(self, params):
+        postcode = (params.get("postcode", [""])[0] or "").strip()
+        if not postcode:
+            json_response(self, {"error": "postcode is required"}, 400)
+            return
+
+        safe_postcode = postcode.replace(" ", "")
+        endpoint = f"https://api.postcodes.io/postcodes/{safe_postcode}"
+        data = cached(f"postcode:{safe_postcode.upper()}", 86400, lambda: fetch_json(endpoint))
+        result = data.get("result") or {}
+        if not result.get("latitude") or not result.get("longitude"):
+            json_response(self, {"error": "postcode not found"}, 404)
+            return
+        json_response(
+            self,
+            {
+                "source": "postcodes.io",
+                "postcode": result.get("postcode") or postcode,
+                "lat": result.get("latitude"),
+                "lon": result.get("longitude"),
+            },
+        )
 
     def handle_weather(self, params):
         lat = query_number(params, "lat")

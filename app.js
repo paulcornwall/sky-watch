@@ -9,6 +9,17 @@ const elements = {
   nightMode: document.querySelector("#nightModeButton"),
   chime: document.querySelector("#chimeButton"),
   testAlert: document.querySelector("#testAlertButton"),
+  changeLocation: document.querySelector("#changeLocationButton"),
+  airAmbulanceZoom: document.querySelector("#airAmbulanceZoomToggle"),
+  autoCollapse: document.querySelector("#autoCollapseToggle"),
+  expandRadar: document.querySelector("#expandRadarButton"),
+  expandRadarAlert: document.querySelector("#expandRadarAlertButton"),
+  locationSetup: document.querySelector("#locationSetup"),
+  postcodeInput: document.querySelector("#postcodeInput"),
+  postcodeButton: document.querySelector("#postcodeButton"),
+  setupLocate: document.querySelector("#setupLocateButton"),
+  setupLater: document.querySelector("#setupLaterButton"),
+  setupStatus: document.querySelector("#setupStatus"),
   localDay: document.querySelector("#localDay"),
   localDate: document.querySelector("#localDate"),
   localTime: document.querySelector("#localTime"),
@@ -119,6 +130,9 @@ const fallbackPosition = { lat: 51.5074, lon: -0.1278, label: "London fallback" 
 const savedPosition = loadSavedPosition();
 const storedDisplayMode = window.localStorage.getItem("skyWatchDisplayMode") === "true";
 const storedNightMode = window.localStorage.getItem("skyWatchNightMode") === "true";
+const storedAirAmbulanceZoom = window.localStorage.getItem("skyWatchAirAmbulanceZoom") !== "false";
+const storedAutoCollapse = window.localStorage.getItem("skyWatchAutoCollapseMap") !== "false";
+const airAmbulancePhoto = "./assets/cornwall-air-ambulance-photo.png";
 const logoCache = new Map();
 
 let state = {
@@ -158,6 +172,10 @@ let state = {
   testAlertUntil: 0,
   militaryLog: loadMilitaryLog(),
   routeCache: new Map(),
+  radarExpanded: false,
+  lastInputAt: Date.now(),
+  airAmbulanceZoomEnabled: storedAirAmbulanceZoom,
+  autoCollapseMap: storedAutoCollapse,
   wakeLock: null,
   wakeLockSupported: "wakeLock" in navigator,
   displayMode: storedDisplayMode,
@@ -170,6 +188,7 @@ let state = {
   news: [],
   newsUpdatedAt: null,
   newsTimer: null,
+  autoCollapseTimer: null,
   feedMode: liveServerAvailable ? "live server" : "browser direct",
   locationMode: savedPosition ? "saved home" : "fallback location",
 };
@@ -379,12 +398,79 @@ function savePosition(position) {
     const saved = JSON.stringify({
       lat: Number(position.lat),
       lon: Number(position.lon),
+      label: position.label || "",
       savedAt: Date.now(),
     });
     window.localStorage.setItem("skyWatchHome", saved);
     window.localStorage.setItem("planesNearbyHome", saved);
   } catch (error) {
     console.warn(error);
+  }
+}
+
+function showLocationSetup(message = "Enter postcode or use auto locate") {
+  elements.locationSetup.hidden = false;
+  elements.setupStatus.textContent = message;
+  window.setTimeout(() => elements.postcodeInput?.focus(), 50);
+}
+
+function hideLocationSetup() {
+  elements.locationSetup.hidden = true;
+}
+
+function applyHomePosition(position, message = "Base position saved on this device.") {
+  const lat = Number(position.lat);
+  const lon = Number(position.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    setMessage("That location was not recognised.", true);
+    return false;
+  }
+  elements.lat.value = lat.toFixed(5);
+  elements.lon.value = lon.toFixed(5);
+  savePosition({ lat, lon, label: position.label || "" });
+  state.userPosition = { lat, lon };
+  state.locationMode = position.label ? `saved home · ${position.label}` : "saved home";
+  hideLocationSetup();
+  setMessage(message, true);
+  refreshAircraft();
+  fetchWeather(state.userPosition);
+  return true;
+}
+
+async function setLocationFromPostcode() {
+  const postcode = elements.postcodeInput.value.trim();
+  if (!postcode) {
+    elements.setupStatus.textContent = "Enter a postcode first";
+    return;
+  }
+  elements.setupStatus.textContent = "Looking up postcode...";
+  try {
+    let payload;
+    if (liveServerAvailable) {
+      const url = new URL("/api/postcode", window.location.origin);
+      url.search = new URLSearchParams({ postcode }).toString();
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) throw new Error("Postcode lookup failed");
+      payload = await response.json();
+    } else {
+      const response = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(postcode.replace(/\s+/g, ""))}`, {
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error("Postcode lookup failed");
+      const data = await response.json();
+      payload = {
+        postcode: data.result?.postcode || postcode,
+        lat: data.result?.latitude,
+        lon: data.result?.longitude,
+      };
+    }
+    applyHomePosition(
+      { lat: Number(payload.lat), lon: Number(payload.lon), label: payload.postcode || postcode.toUpperCase() },
+      `Base position saved from ${payload.postcode || postcode.toUpperCase()}.`,
+    );
+  } catch (error) {
+    console.warn(error);
+    elements.setupStatus.textContent = "Postcode not found. Try again or use auto locate.";
   }
 }
 
@@ -793,6 +879,14 @@ function preloadLogo(src) {
 }
 
 function airlineLogoMarkup(aircraft, extraClass = "", id = "") {
+  if (aircraft.specialReason === "Air ambulance") {
+    return `
+      <span ${id ? `id="${id}" ` : ""}class="airline-logo special-photo ${extraClass}" aria-label="Cornwall Air Ambulance photo" data-logo-key="AIR-AMBULANCE">
+        <img src="${airAmbulancePhoto}" alt="" loading="eager" decoding="async" />
+        <span class="logo-initials">AA</span>
+      </span>
+    `;
+  }
   const branding = brandingForFlight(aircraft.flight);
   const logo = airlineLogoUrl(aircraft.flight);
   preloadLogo(logo);
@@ -942,8 +1036,8 @@ function airAmbulanceTrackingStatus(aircraft) {
     return `Air Ambulance landed ${nearest?.name ? `near ${nearest.name}` : "near last known position"}`;
   }
 
-  if (Number.isFinite(userDistance) && userDistance <= 3) {
-    return `Air Ambulance within 3 miles - ${place}`;
+  if (Number.isFinite(userDistance) && userDistance <= 5) {
+    return `Air Ambulance within 5 miles - ${place}`;
   }
 
   if (state.userPosition && headingToTarget(aircraft, state.userPosition, 44) && Number.isFinite(userDistance) && userDistance <= 30) {
@@ -1139,6 +1233,7 @@ function compactRouteName(value) {
     value.icao_code,
     value.icao,
     value.name,
+    value.airline_name,
     value.airport,
     value.municipality,
   ]
@@ -1147,7 +1242,13 @@ function compactRouteName(value) {
 }
 
 function extractRouteDetails(payload) {
-  const route = payload?.data?.response?.flightroute || payload?.response?.flightroute || payload?.flightroute || payload?.route;
+  const route =
+    (Array.isArray(payload?.data?.data) ? payload.data.data[0] : null) ||
+    (Array.isArray(payload?.data) ? payload.data[0] : null) ||
+    payload?.data?.response?.flightroute ||
+    payload?.response?.flightroute ||
+    payload?.flightroute ||
+    payload?.route;
   if (!route) return null;
   const origin = route.origin || route.from || route.departure;
   const destination = route.destination || route.to || route.arrival;
@@ -1158,6 +1259,7 @@ function extractRouteDetails(payload) {
   const airline =
     compactRouteName(route.airline) ||
     compactRouteName(route.operator) ||
+    compactRouteName(route.airline?.name) ||
     compactRouteName(payload?.data?.response?.aircraft?.operator);
   const departure = route.departure || route.dep || route.origin || {};
   const arrival = route.arrival || route.arr || route.destination || {};
@@ -1368,6 +1470,40 @@ function selectAircraft(aircraft) {
   renderSpotlight();
 }
 
+function setRadarExpanded(expanded, userInitiated = false) {
+  state.radarExpanded = Boolean(expanded);
+  if (userInitiated) state.lastInputAt = Date.now();
+  document.body.classList.toggle("radar-expanded", state.radarExpanded);
+  elements.expandRadar.textContent = state.radarExpanded ? "Close" : "Expand";
+  window.setTimeout(() => {
+    state.map?.invalidateSize();
+    updateMap();
+    drawRadar();
+  }, 0);
+}
+
+function maybeExpandAirAmbulanceMap() {
+  const aircraft = activeAirAmbulance();
+  if (
+    state.airAmbulanceZoomEnabled &&
+    aircraft &&
+    Number.isFinite(aircraft.distance) &&
+    aircraft.distance <= 5 &&
+    !state.radarExpanded
+  ) {
+    state.selectedAircraftKey = aircraftKey(aircraft);
+    setRadarExpanded(true);
+  }
+}
+
+function collapseExpandedMapIfIdle() {
+  if (!state.radarExpanded || !state.autoCollapseMap) return;
+  const aircraft = activeAirAmbulance();
+  const stillClose = aircraft && Number.isFinite(aircraft.distance) && aircraft.distance <= 5;
+  const idleFor = Date.now() - state.lastInputAt;
+  if (!stillClose || idleFor >= 20 * 60 * 1000) setRadarExpanded(false);
+}
+
 function updateMap() {
   initMap();
   const radius = Number(elements.radius.value);
@@ -1376,9 +1512,9 @@ function updateMap() {
   if (!state.mapReady || !state.map || !state.userPosition) return;
 
   const position = [state.userPosition.lat, state.userPosition.lon];
-  if (tracked?.specialReason && Number.isFinite(tracked.lat) && Number.isFinite(tracked.lon)) {
+  if ((state.radarExpanded || tracked?.specialReason) && tracked?.specialReason && Number.isFinite(tracked.lat) && Number.isFinite(tracked.lon)) {
     const bounds = L.latLngBounds([position, [tracked.lat, tracked.lon]]).pad(0.34);
-    state.map.fitBounds(bounds, { animate: true, maxZoom: 10, padding: [34, 34] });
+    state.map.fitBounds(bounds, { animate: true, maxZoom: state.radarExpanded ? 13 : 10, padding: [34, 34] });
     elements.mapLabel.textContent = `Tracking ${tracked.specialReason}`;
   } else {
     state.map.setView(position, radius <= 25 ? 9 : radius <= 50 ? 8 : 7, { animate: false });
@@ -1527,6 +1663,7 @@ function renderStats() {
   renderAirAmbulanceWatch();
   renderMilitaryLog();
   renderAirAmbulanceAlert();
+  maybeExpandAirAmbulanceMap();
   renderFeedStatus();
   renderTicker();
 }
@@ -1641,7 +1778,7 @@ function playUrgentChime() {
 
 function renderAirAmbulanceAlert() {
   const aircraft = activeAirAmbulance();
-  const inRange = aircraft && Number.isFinite(aircraft.distance) && aircraft.distance <= 3;
+  const inRange = aircraft && Number.isFinite(aircraft.distance) && aircraft.distance <= 5;
   const testActive = Date.now() < state.testAlertUntil;
   elements.airAmbulanceAlert.hidden = !(inRange || testActive);
   elements.airAmbulanceAlert.classList.toggle("active", Boolean(inRange || testActive));
@@ -1654,7 +1791,7 @@ function renderAirAmbulanceAlert() {
 
   elements.airAmbulanceAlertTitle.textContent = "Air Ambulance close";
   elements.airAmbulanceAlertText.textContent = `${aircraft.flight} ${formatDistance(aircraft.distance)} away - ${aircraft.airAmbulanceStatus || placePhrase(aircraft)}`;
-  const key = `${aircraftKey(aircraft)}:within-3`;
+  const key = `${aircraftKey(aircraft)}:within-5`;
   if (!state.airAmbulanceAlerted.has(key)) {
     state.airAmbulanceAlerted.add(key);
     playUrgentChime();
@@ -2020,21 +2157,22 @@ async function refreshAircraft() {
 function locateUser() {
   if (!navigator.geolocation) {
     setMessage("This browser does not support location lookup. Enter coordinates manually.", true);
+    showLocationSetup("Auto locate is not supported here. Enter postcode instead.");
     return;
   }
 
   setMessage("Asking the browser for your location...", true);
+  elements.setupStatus.textContent = "Asking browser for location...";
   navigator.geolocation.getCurrentPosition(
     (position) => {
-      elements.lat.value = position.coords.latitude.toFixed(5);
-      elements.lon.value = position.coords.longitude.toFixed(5);
-      savePosition({ lat: Number(elements.lat.value), lon: Number(elements.lon.value) });
-      state.locationMode = "saved home";
-      setMessage("Base position saved on this device.", true);
-      refreshAircraft();
+      applyHomePosition(
+        { lat: position.coords.latitude, lon: position.coords.longitude, label: "auto locate" },
+        "Base position saved from auto locate.",
+      );
     },
     () => {
       setMessage("Location was not available. Enter your home coordinates manually, then refresh.", true);
+      showLocationSetup("Location was not available. Enter postcode instead.");
       if (!state.lastUpdatedAt) refreshAircraft();
     },
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 },
@@ -2064,7 +2202,34 @@ function registerServiceWorker() {
   navigator.serviceWorker.register("./service-worker.js").catch((error) => console.warn(error));
 }
 
+function markUserInput() {
+  state.lastInputAt = Date.now();
+}
+
 elements.locate.addEventListener("click", locateUser);
+elements.changeLocation.addEventListener("click", () => showLocationSetup("Change saved base location"));
+elements.postcodeButton.addEventListener("click", setLocationFromPostcode);
+elements.postcodeInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") setLocationFromPostcode();
+});
+elements.setupLocate.addEventListener("click", locateUser);
+elements.setupLater.addEventListener("click", () => {
+  hideLocationSetup();
+  setMessage("Using fallback location. Change it any time under Controls > Location.", true);
+});
+elements.expandRadar.addEventListener("click", () => setRadarExpanded(!state.radarExpanded, true));
+elements.expandRadarAlert.addEventListener("click", () => setRadarExpanded(true, true));
+elements.airAmbulanceZoom.checked = state.airAmbulanceZoomEnabled;
+elements.autoCollapse.checked = state.autoCollapseMap;
+elements.airAmbulanceZoom.addEventListener("change", () => {
+  state.airAmbulanceZoomEnabled = elements.airAmbulanceZoom.checked;
+  window.localStorage.setItem("skyWatchAirAmbulanceZoom", String(state.airAmbulanceZoomEnabled));
+  if (state.airAmbulanceZoomEnabled) maybeExpandAirAmbulanceMap();
+});
+elements.autoCollapse.addEventListener("change", () => {
+  state.autoCollapseMap = elements.autoCollapse.checked;
+  window.localStorage.setItem("skyWatchAutoCollapseMap", String(state.autoCollapseMap));
+});
 elements.refresh.addEventListener("click", () => {
   const lat = Number(elements.lat.value);
   const lon = Number(elements.lon.value);
@@ -2083,6 +2248,7 @@ elements.testAlert.addEventListener("click", testAirAmbulanceAlert);
 elements.radius.addEventListener("change", refreshAircraft);
 elements.filter.addEventListener("input", applyFilter);
 window.addEventListener("resize", drawRadar);
+["pointerdown", "keydown", "touchstart"].forEach((eventName) => window.addEventListener(eventName, markUserInput, { passive: true }));
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state.displayMode) requestWakeLock();
 });
@@ -2098,7 +2264,10 @@ renderTemperature();
 renderTicker();
 registerServiceWorker();
 animate();
-if (!savedPosition) setMessage("Using fallback location. Tap Locate once on the wall device, or enter your coordinates and refresh.", true);
+if (!savedPosition) {
+  setMessage("Set a base location with postcode or auto locate. Using fallback until saved.", true);
+  showLocationSetup("Enter postcode or use auto locate to set base");
+}
 refreshAircraft();
 fetchBitcoin();
 fetchNews();
@@ -2110,6 +2279,7 @@ state.updateClock = window.setInterval(renderStats, 1000);
 state.dateClock = window.setInterval(updateDateTime, 1000);
 state.staleTimer = window.setInterval(renderFeedStatus, 30000);
 state.burnInTimer = window.setInterval(updateBurnInShift, 3 * 60 * 1000);
+state.autoCollapseTimer = window.setInterval(collapseExpandedMapIfIdle, 60 * 1000);
 state.spotlightTimer = window.setInterval(() => {
   const limit = Math.min(3, state.filtered.length);
   if (limit > 1) {

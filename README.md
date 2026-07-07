@@ -61,7 +61,7 @@ The app:
 
 ADS-B feeds normally provide aircraft position, callsign, speed, heading and altitude. They do not reliably include route origin and destination. The live server now attempts a route lookup for recognised airline callsigns and shows airport codes when available. Private, military, emergency and unknown identifiers may still show `Route lookup pending` because those routes are not published in the same way.
 
-Route origin and destination usually need a separate provider such as AeroDataBox, Aviationstack, FlightAware or a FlightRadar-style route service. Keep API keys on the server, not in browser JavaScript.
+Route origin, destination and timetable data usually need a separate provider such as AeroDataBox, Aviationstack, FlightAware or a FlightRadar-style route service. The live server supports an optional `AVIATIONSTACK_API_KEY` environment variable for scheduled/estimated flight times. Keep API keys on the server, not in browser JavaScript.
 
 ## Map Note
 

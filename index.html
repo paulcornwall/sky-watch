@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display6" />
+    <link rel="stylesheet" href="./styles.css?v=display8" />
   </head>
   <body class="kiosk-mode">
     <main class="app-shell">
@@ -98,6 +98,18 @@
             <span aria-hidden="true">◐</span>
             Night
           </button>
+          <button id="changeLocationButton" type="button" title="Change saved base location">
+            <span aria-hidden="true">⌖</span>
+            Location
+          </button>
+          <label class="control-check">
+            <input id="airAmbulanceZoomToggle" type="checkbox" checked />
+            AA map zoom
+          </label>
+          <label class="control-check">
+            <input id="autoCollapseToggle" type="checkbox" checked />
+            Auto close map
+          </label>
         </div>
       </section>
 
@@ -152,6 +164,7 @@
           <strong id="airAmbulanceAlertTitle">Air ambulance alert</strong>
           <span id="airAmbulanceAlertText">Monitoring Cornwall Air Ambulance</span>
         </div>
+        <button id="expandRadarAlertButton" type="button">Expand radar</button>
       </section>
 
       <section class="spotlight-band" aria-label="Priority aircraft spotlight">
@@ -219,6 +232,7 @@
           <div class="map-header">
             <span id="mapLabel">Live sector map</span>
             <strong id="mapRangeLabel">50 mi radius</strong>
+            <button id="expandRadarButton" type="button">Expand</button>
           </div>
           <div class="compass-label north">N</div>
           <div class="compass-label east">E</div>
@@ -271,7 +285,25 @@
       <footer class="developer-credit">developed by Paul May Industries</footer>
     </main>
 
+    <section class="setup-modal" id="locationSetup" aria-labelledby="locationSetupTitle" hidden>
+      <div class="setup-card">
+        <p class="eyebrow">Base station setup</p>
+        <h2 id="locationSetupTitle">Set Sky Watch location</h2>
+        <p>Enter a postcode or use auto locate. This is remembered on this device.</p>
+        <label>
+          Postcode
+          <input id="postcodeInput" type="text" autocomplete="postal-code" placeholder="TR1 3LQ" />
+        </label>
+        <div class="setup-actions">
+          <button id="postcodeButton" type="button">Use postcode</button>
+          <button id="setupLocateButton" type="button">Auto locate</button>
+          <button id="setupLaterButton" type="button">Use fallback</button>
+        </div>
+        <span id="setupStatus">Waiting for base location</span>
+      </div>
+    </section>
+
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display6" defer></script>
+    <script src="./app.js?v=display8" defer></script>
   </body>
 </html>
