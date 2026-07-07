@@ -1,0 +1,19 @@
+{
+  "name": "Sky Watch",
+  "short_name": "Sky Watch",
+  "description": "Retro ADS-B aviation and weather monitoring dashboard.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#020604",
+  "theme_color": "#020604",
+  "icons": [
+    {
+      "src": "./icons/sky-watch-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

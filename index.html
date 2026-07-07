@@ -4,6 +4,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sky Watch</title>
+    <meta name="theme-color" content="#020604" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Sky Watch" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/sky-watch-icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icons/sky-watch-icon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -14,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=display3" />
   </head>
   <body class="kiosk-mode">
     <main class="app-shell">
@@ -22,6 +29,7 @@
         <div>
           <p class="eyebrow">ADS-B terminal // live radius</p>
           <h1>Sky Watch</h1>
+          <p class="title-credit">developed by Paul May Industries</p>
         </div>
         <div class="ticker-panel" aria-label="Live alert ticker">
           <div class="ticker-label">Signal feed</div>
@@ -36,7 +44,15 @@
           <strong id="localTime">--:--</strong>
           <span id="localDate">5 July 2026</span>
         </div>
+        <div class="temperature-panel" aria-label="Current temperature">
+          <strong id="currentTemperature">--°C</strong>
+          <span>Current temp</span>
+        </div>
         <div class="kiosk-actions">
+          <button id="displayModeButton" class="display-toggle" type="button" title="Toggle Display Mode">
+            <span aria-hidden="true">▣</span>
+            Display Mode
+          </button>
           <button id="chimeButton" class="alert-toggle" type="button" title="Toggle special aircraft chime">
             <span aria-hidden="true">♪</span>
             Chime off
@@ -76,7 +92,16 @@
             <span aria-hidden="true">↻</span>
             Refresh
           </button>
+          <button id="nightModeButton" type="button" title="Toggle night mode">
+            <span aria-hidden="true">◐</span>
+            Night
+          </button>
         </div>
+      </section>
+
+      <section class="display-feed" aria-live="polite">
+        <div id="feedStatus" class="feed-status">Feeds standing by</div>
+        <div id="wakeStatus" class="wake-status">Display Mode off</div>
       </section>
 
       <section class="status-strip" aria-live="polite">
@@ -143,6 +168,7 @@
             <span aria-hidden="true">→</span>
             <span id="spotlightTo">To unknown</span>
           </div>
+          <div class="flight-times" id="spotlightTimes">Flight times unavailable</div>
           <div class="spotlight-metrics">
             <div>
               <span id="spotlightDistance">--</span>
@@ -163,6 +189,10 @@
             <div>
               <span id="spotlightType">--</span>
               <small>airframe</small>
+            </div>
+            <div>
+              <span id="spotlightSeen">--</span>
+              <small>last seen</small>
             </div>
           </div>
           <div class="highlights">
@@ -225,7 +255,9 @@
                   <th>Speed</th>
                   <th>From</th>
                   <th>To</th>
+                  <th>Times</th>
                   <th>Distance</th>
+                  <th>Seen</th>
                 </tr>
               </thead>
               <tbody id="aircraftRows"></tbody>
@@ -234,10 +266,10 @@
         </section>
       </section>
 
-      <footer class="developer-credit">Developed by Paul May</footer>
+      <footer class="developer-credit">developed by Paul May Industries</footer>
     </main>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js" defer></script>
+    <script src="./app.js?v=display3" defer></script>
   </body>
 </html>

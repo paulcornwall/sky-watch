@@ -22,6 +22,7 @@ The app:
 - Promotes special aircraft first, then the nearest aircraft, into a large wall-screen spotlight.
 - Fits an iPad-sized wall display in landscape and portrait orientations.
 - Shows the local day, date, month and time in the header.
+- Shows a fixed current temperature module beside the date and time.
 - Shows a washing-focused rain alert for the next 12 hours.
 - Uses a scrolling live ticker for local temperature, rain, aircraft, special alerts, local time and BTC.
 - Adds breaking-news headlines to the live board when the news feed is available.
@@ -31,6 +32,7 @@ The app:
 - Shows movement status such as approaching, passing nearby, overhead or moving away.
 - Shows flight number, airline, altitude, origin, destination and distance.
 - Looks up origin and destination for routeable airline callsigns when the live server can reach ADSBDB.
+- Shows scheduled or estimated flight times when the route provider includes them, with a discreet fallback when unavailable.
 - Converts aircraft speed to mph for the display.
 - Shows aircraft type when the aircraft feed includes it.
 - Tracks closest aircraft today and lowest altitude seen.
@@ -40,6 +42,10 @@ The app:
 - Keeps an always-visible Air Ambulance Watch tile, even when the aircraft is not currently airborne.
 - Keeps a 48 hour on-device log of military aircraft seen within 5 miles.
 - Shows live airline logo images for recognised airlines, with offline colour badges as a fallback.
+- Uses larger cached logo slots to reduce flicker and layout jumping during live refreshes.
+- Adds optional Display Mode for wall-mounted tablet use, including larger readouts, reduced clutter, stale-data warnings and wake-lock support where the browser allows it.
+- Adds optional Night Mode with a dimmer display and quiet-hours chime muting.
+- Adds a PWA manifest, local app icon and service worker shell cache for installable tablet use.
 - Keeps a compact real map/radar view with darkened OpenStreetMap tiles, animated scan effects, range rings, compass labels, a legend and aircraft markers.
 - Auto-tracks air ambulance, Coastguard and military aircraft on the map with stronger labels and short movement trails.
 - Adds Cornwall Air Ambulance live wording for heading your way, landed near a town, heading towards RCHT, heading towards Derriford Hospital, or heading back to Newquay base.
