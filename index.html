@@ -21,12 +21,12 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display3" />
+    <link rel="stylesheet" href="./styles.css?v=display6" />
   </head>
   <body class="kiosk-mode">
     <main class="app-shell">
       <section class="control-band" aria-label="Aircraft search controls">
-        <div>
+        <div class="brand-panel">
           <p class="eyebrow">ADS-B terminal // live radius</p>
           <h1>Sky Watch</h1>
           <p class="title-credit">developed by Paul May Industries</p>
@@ -39,14 +39,16 @@
             </div>
           </div>
         </div>
-        <div class="datetime-panel" aria-label="Local date and time">
-          <span id="localDay">Sunday</span>
-          <strong id="localTime">--:--</strong>
-          <span id="localDate">5 July 2026</span>
-        </div>
-        <div class="temperature-panel" aria-label="Current temperature">
-          <strong id="currentTemperature">--°C</strong>
-          <span>Current temp</span>
+        <div class="header-info">
+          <div class="datetime-panel" aria-label="Local date and time">
+            <span id="localDay">Sunday</span>
+            <strong id="localTime">--:--</strong>
+            <span id="localDate">5 July 2026</span>
+          </div>
+          <div class="temperature-panel" aria-label="Current temperature">
+            <strong id="currentTemperature">--°C</strong>
+            <span>Current temp</span>
+          </div>
         </div>
         <div class="kiosk-actions">
           <button id="displayModeButton" class="display-toggle" type="button" title="Toggle Display Mode">
@@ -270,6 +272,6 @@
     </main>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display3" defer></script>
+    <script src="./app.js?v=display6" defer></script>
   </body>
 </html>
