@@ -2312,11 +2312,13 @@ function toggleKiosk() {
 }
 
 function applyDisplayPreferences() {
+  const settingsWereOpen = state.displayMode && !document.body.classList.contains("kiosk-mode");
   if (state.nightScheduleEnabled) state.nightMode = scheduledNightActive();
   document.body.classList.remove("preset-wall", "preset-kitchen", "preset-bedside", "preset-testing");
   document.body.classList.add(`preset-${state.displayPreset || "wall"}`);
   document.body.classList.toggle("display-mode", state.displayMode);
   if (state.displayMode) document.body.classList.add("kiosk-mode");
+  if (settingsWereOpen) document.body.classList.remove("kiosk-mode");
   document.body.classList.toggle("night-mode", state.nightMode);
   document.documentElement.style.setProperty("--night-dim", String(state.nightDim));
   elements.displayMode.classList.toggle("armed", state.displayMode);
