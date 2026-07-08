@@ -17,6 +17,7 @@ const elements = {
   changeLocation: document.querySelector("#changeLocationButton"),
   airAmbulanceZoom: document.querySelector("#airAmbulanceZoomToggle"),
   autoCollapse: document.querySelector("#autoCollapseToggle"),
+  displayPreset: document.querySelector("#displayPresetSelect"),
   expandRadar: document.querySelector("#expandRadarButton"),
   expandRadarAlert: document.querySelector("#expandRadarAlertButton"),
   locationSetup: document.querySelector("#locationSetup"),
@@ -34,6 +35,8 @@ const elements = {
   weatherUpdatedTime: document.querySelector("#weatherUpdatedTime"),
   feedStatus: document.querySelector("#feedStatus"),
   wakeStatus: document.querySelector("#wakeStatus"),
+  homeStatus: document.querySelector("#homeStatus"),
+  screenHealth: document.querySelector("#screenHealth"),
   rainAlert: document.querySelector("#rainAlert"),
   rainAlertTitle: document.querySelector("#rainAlertTitle"),
   rainAlertText: document.querySelector("#rainAlertText"),
@@ -41,6 +44,9 @@ const elements = {
   rainChanceValue: document.querySelector("#rainChanceValue"),
   tickerTrack: document.querySelector("#tickerTrack"),
   filter: document.querySelector("#filterInput"),
+  aircraftFilters: [...document.querySelectorAll("[data-aircraft-filter]")],
+  nearestList: document.querySelector("#nearestAircraftList"),
+  rescueLogList: document.querySelector("#rescueLogList"),
   rows: document.querySelector("#aircraftRows"),
   message: document.querySelector("#message"),
   count: document.querySelector("#aircraftCount"),
@@ -158,6 +164,8 @@ const storedNightEnd = window.localStorage.getItem("skyWatchNightEnd") || "07:00
 const storedAirAmbulanceZoom = window.localStorage.getItem("skyWatchAirAmbulanceZoom") !== "false";
 const storedAutoCollapse = window.localStorage.getItem("skyWatchAutoCollapseMap") !== "false";
 const storedRadius = window.localStorage.getItem("skyWatchRadius");
+const storedAircraftCategory = window.localStorage.getItem("skyWatchAircraftCategory") || "all";
+const storedDisplayPreset = window.localStorage.getItem("skyWatchDisplayPreset") || "wall";
 const airAmbulancePhoto = "./assets/cornwall-air-ambulance-photo.png";
 const logoCache = new Map();
 
@@ -210,6 +218,7 @@ let state = {
   lastAirAmbulance: null,
   testAlertUntil: 0,
   militaryLog: loadMilitaryLog(),
+  rescueLog: loadRescueLog(),
   routeCache: new Map(),
   radarExpanded: false,
   lastInputAt: Date.now(),
@@ -218,6 +227,8 @@ let state = {
   wakeLock: null,
   wakeLockSupported: "wakeLock" in navigator,
   displayMode: storedDisplayMode,
+  aircraftCategory: storedAircraftCategory,
+  displayPreset: storedDisplayPreset,
   nightMode: storedNightMode,
   nightDim: Number(storedNightDim),
   nightScheduleEnabled: storedNightSchedule,
@@ -676,6 +687,72 @@ function updateMilitaryLog() {
   saveMilitaryLog();
 }
 
+function loadRescueLog() {
+  try {
+    const entries = JSON.parse(window.localStorage.getItem("skyWatchRescueLog") || "[]");
+    if (Array.isArray(entries)) return pruneRescueLog(entries);
+  } catch (error) {
+    console.warn(error);
+  }
+  return [];
+}
+
+function pruneRescueLog(entries) {
+  const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+  return entries.filter((entry) => Number(entry.time) >= cutoff);
+}
+
+function saveRescueLog() {
+  try {
+    window.localStorage.setItem("skyWatchRescueLog", JSON.stringify(state.rescueLog));
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+function updateRescueLog() {
+  state.rescueLog = pruneRescueLog(state.rescueLog);
+  const rescueAircraft = state.aircraft
+    .filter(isRescueAircraft)
+    .filter((aircraft) => Number.isFinite(aircraft.distance));
+
+  for (const aircraft of rescueAircraft) {
+    const timeBucket = Math.floor(Date.now() / (15 * 60 * 1000));
+    const key = `${aircraftKey(aircraft)}:${timeBucket}`;
+    if (state.rescueLog.some((entry) => entry.key === key)) continue;
+    const place = nearestPlace(aircraft.lat, aircraft.lon);
+    state.rescueLog.unshift({
+      key,
+      time: Date.now(),
+      flight: aircraft.flight,
+      service: displayServiceName(aircraft),
+      type: aircraft.specialReason,
+      distance: aircraft.distance,
+      altitude: aircraft.altitude,
+      place: place?.name || "unknown area",
+      status: aircraft.airAmbulanceStatus || aircraft.status || movementStatus(aircraft),
+    });
+  }
+
+  state.rescueLog = state.rescueLog.slice(0, 30);
+  saveRescueLog();
+}
+
+function plainRainStatus() {
+  if (!state.weather.length) {
+    return state.weatherError ? "Weather feed retrying - keeping last known weather if available" : "Waiting for weather";
+  }
+  const nextThree = rainChanceNextHours(3);
+  const { firstRain, strongestRain } = rainWindow();
+  if (nextThree.firstRain) {
+    return `Rain likely ${formatLeadTime(nextThree.firstRain.timestamp)} - bring washing in`;
+  }
+  if (firstRain) {
+    return `Washing safe until ${formatHour(firstRain.time)} - later rain risk ${strongestRain?.rainChance || firstRain.rainChance}%`;
+  }
+  return "Washing safe for the next 24 hours";
+}
+
 function rainWindow() {
   const rainHours = state.weather.filter((hour) => hour.rainAmount > 0.1 || hour.rainChance >= 40);
   const firstRain = rainHours[0];
@@ -751,6 +828,7 @@ function renderTicker() {
   if (Number.isFinite(state.currentTemperature)) {
     items.push(`Local temp ${Math.round(state.currentTemperature)}°C`);
   }
+  items.push(plainRainStatus());
   items.push(forecastSummary24());
 
   if (firstRain) {
@@ -758,9 +836,7 @@ function renderTicker() {
     if (strongestRain && strongestRain !== firstRain) {
       items.push(`Heaviest shower risk ${formatHour(strongestRain.time)} at ${strongestRain.rainChance}%`);
     }
-  } else if (state.weather.length) {
-    items.push("Washing watch: no rain expected in the next 24 hours");
-  } else {
+  } else if (!state.weather.length) {
     items.push("Weather feed unavailable - rain watch paused");
   }
 
@@ -818,6 +894,27 @@ function renderFeedStatus() {
   const lastWeather = state.weatherUpdatedAt ? `weather ${formatClock(new Date(state.weatherUpdatedAt))}` : "weather not loaded";
   document.body.classList.toggle("data-stale", Boolean(stale || aircraftWarning || state.weatherError));
   elements.feedStatus.textContent = `${aircraftStatus} · ${weatherStatus} · ${location} · ${lastAircraft} · ${nextRefresh} · ${lastWeather}`;
+  renderHomeStatus({ aircraftStatus, weatherStatus, stale, aircraftWarning, location });
+}
+
+function renderHomeStatus({ aircraftStatus, weatherStatus, stale, aircraftWarning, location } = {}) {
+  if (!elements.homeStatus || !elements.screenHealth) return;
+  const radius = `${elements.radius.value || "50"} mi`;
+  const updated = state.lastUpdatedAt ? formatClock(new Date(state.lastUpdatedAt)) : "waiting";
+  const mode = state.locationMode === "fallback location" ? "demo" : state.locationMode || "standing by";
+  elements.homeStatus.textContent = `Base: ${location || state.homeLabel || "not set"} · Radius: ${radius} · ${aircraftStatus || "aircraft waiting"} · Updated ${updated} · ${mode}`;
+
+  const weatherRetrying = Boolean(state.weatherError);
+  const staleText = staleMinutes();
+  const warning = Boolean(stale || aircraftWarning || weatherRetrying);
+  elements.screenHealth.classList.toggle("warning", warning);
+  if (aircraftWarning || stale) {
+    elements.screenHealth.textContent = `Screen health: aircraft feed retrying${staleText != null ? ` · data ${staleText} min old` : ""}`;
+  } else if (weatherRetrying) {
+    elements.screenHealth.textContent = `Screen health: weather retrying · previous data retained`;
+  } else {
+    elements.screenHealth.textContent = `Screen health: live · ${weatherStatus || "weather waiting"}`;
+  }
 }
 
 function renderWeather() {
@@ -837,18 +934,17 @@ function renderWeather() {
 
   const nextRain = rainChanceNextHours(3);
   const currentWeather = state.weather.find((hour) => hour.timestamp >= Date.now() - 60 * 60 * 1000) || state.weather[0];
+  const rainStatus = plainRainStatus();
   elements.weatherCondition.textContent = state.weatherError ? "Weather feed retrying" : weatherConditionLabel(currentWeather?.code);
   elements.weatherUpdatedTime.textContent = state.weatherUpdatedAt ? formatClock(new Date(state.weatherUpdatedAt)) : "Waiting";
   elements.rainAlert.classList.toggle("active", Boolean(nextRain.firstRain));
   if (nextRain.firstRain) {
-    elements.rainAlertTitle.textContent = "Incoming rain";
-    elements.rainAlertText.textContent = `${formatLeadTime(nextRain.firstRain.timestamp)} at ${formatHour(nextRain.firstRain.time)} · ${Math.round(nextRain.chance)}% chance next 3h`;
+    elements.rainAlertTitle.textContent = "Bring washing in";
+    elements.rainAlertText.textContent = rainStatus;
     elements.weatherRainSummary.textContent = `${Math.round(nextRain.chance)}% · ${formatLeadTime(nextRain.firstRain.timestamp)}`;
   } else {
     elements.rainAlertTitle.textContent = "Washing safe";
-    elements.rainAlertText.textContent = nextRain.chance == null
-      ? "Rain chance unavailable"
-      : `${Math.round(nextRain.chance)}% rain chance next 3h`;
+    elements.rainAlertText.textContent = rainStatus;
     elements.weatherRainSummary.textContent = nextRain.chance == null
       ? "Rain chance unavailable"
       : `${Math.round(nextRain.chance)}% next 3h`;
@@ -1816,6 +1912,7 @@ function applyFilter() {
   const term = elements.filter.value.trim().toLowerCase();
   state.filtered = state.aircraft
     .filter((aircraft) => {
+      if (!aircraftCategoryMatches(aircraft)) return false;
       if (!term) return true;
       return [
         aircraft.flight,
@@ -1834,6 +1931,36 @@ function applyFilter() {
   renderStats();
   updateMap();
   drawRadar();
+}
+
+function aircraftCategoryMatches(aircraft, categoryOverride) {
+  const category = categoryOverride || state.aircraftCategory || "all";
+  if (category === "all") return true;
+  if (category === "military") return aircraft.specialReason === "Military";
+  if (category === "rescue") return isRescueAircraft(aircraft);
+  if (category === "helicopters") {
+    const text = [aircraft.flight, aircraft.aircraftType, aircraft.airline, aircraft.specialReason].join(" ").toLowerCase();
+    return /(heli|helicopter|aw169|aw139|ec135|h145|s-92|s92|rotor|coastguard|helimed)/i.test(text);
+  }
+  if (category === "passenger") {
+    return !aircraft.specialReason && !aircraftCategoryMatches(aircraft, "helicopters");
+  }
+  return true;
+}
+
+function setAircraftCategory(category) {
+  state.aircraftCategory = category || "all";
+  window.localStorage.setItem("skyWatchAircraftCategory", state.aircraftCategory);
+  renderAircraftFilterButtons();
+  applyFilter();
+}
+
+function renderAircraftFilterButtons() {
+  for (const button of elements.aircraftFilters) {
+    const active = button.dataset.aircraftFilter === state.aircraftCategory;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
 }
 
 function renderTable() {
@@ -1866,6 +1993,60 @@ function renderTable() {
   }
 }
 
+function renderNearestList() {
+  if (!elements.nearestList) return;
+  const aircraftList = state.filtered.slice(0, 5);
+  if (!aircraftList.length) {
+    elements.nearestList.innerHTML = `<div class="empty-state">Waiting for aircraft within selected radius</div>`;
+    return;
+  }
+
+  elements.nearestList.innerHTML = aircraftList
+    .map((aircraft) => {
+      const branding = brandingForFlight(aircraft.flight);
+      const status = aircraft.airAmbulanceStatus || aircraft.specialReason || aircraft.status;
+      const route = routeNeedsLookup(aircraft)
+        ? "Route not available"
+        : `${routeLabel(aircraft.from, aircraft.fromCode)} -> ${routeLabel(aircraft.to, aircraft.toCode)}`;
+      return `
+        <button type="button" class="nearest-row${aircraft.specialReason ? " special" : ""}" data-aircraft-key="${escapeHtml(aircraftKey(aircraft))}" style="--logo-a:${branding.colors[0]};--logo-b:${branding.colors[1]}">
+          ${airlineLogoMarkup(aircraft)}
+          <span class="nearest-main">
+            <strong>${escapeHtml(displayServiceName(aircraft))}</strong>
+            <small>${escapeHtml(aircraft.flight)} · ${escapeHtml(status)}</small>
+            <em>${escapeHtml(route)}</em>
+          </span>
+          <span class="nearest-metrics">
+            <b>${escapeHtml(formatDistance(aircraft.distance))}</b>
+            <small>${escapeHtml(formatAltitude(aircraft.altitude))} · ${escapeHtml(formatSpeed(aircraft.speed))}</small>
+            <small>${escapeHtml(formatDirection(aircraft.bearing))} · seen ${escapeHtml(formatAge(aircraft.seenAt || state.lastUpdatedAt))}</small>
+          </span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function renderRescueLog() {
+  if (!elements.rescueLogList) return;
+  state.rescueLog = pruneRescueLog(state.rescueLog);
+  if (!state.rescueLog.length) {
+    elements.rescueLogList.innerHTML = `<div class="empty-state">No air ambulance or Coastguard activity logged yet</div>`;
+    return;
+  }
+
+  elements.rescueLogList.innerHTML = state.rescueLog
+    .slice(0, 6)
+    .map((entry) => `
+      <div class="rescue-log-row">
+        <strong>${escapeHtml(formatHour(entry.time))}</strong>
+        <span>${escapeHtml(entry.service || entry.flight)} · ${escapeHtml(formatDistance(Number(entry.distance)))} near ${escapeHtml(entry.place || "unknown area")}</span>
+        <small>${escapeHtml(entry.status || "tracked")} · ${escapeHtml(formatAltitude(entry.altitude))}</small>
+      </div>
+    `)
+    .join("");
+}
+
 function renderStats() {
   elements.count.textContent = state.filtered.length.toLocaleString();
   elements.nearest.textContent = state.filtered[0] ? formatDistance(state.filtered[0].distance) : "Waiting";
@@ -1878,6 +2059,9 @@ function renderStats() {
     elements.center.textContent = `${label} · ${state.userPosition.lat.toFixed(4)}, ${state.userPosition.lon.toFixed(4)}`;
   }
   renderSpotlight();
+  renderAircraftFilterButtons();
+  renderNearestList();
+  renderRescueLog();
   renderAirAmbulanceWatch();
   renderMilitaryLog();
   renderAirAmbulanceAlert();
@@ -2095,6 +2279,8 @@ function toggleKiosk() {
 
 function applyDisplayPreferences() {
   if (state.nightScheduleEnabled) state.nightMode = scheduledNightActive();
+  document.body.classList.remove("preset-wall", "preset-kitchen", "preset-bedside", "preset-testing");
+  document.body.classList.add(`preset-${state.displayPreset || "wall"}`);
   document.body.classList.toggle("display-mode", state.displayMode);
   if (state.displayMode) document.body.classList.add("kiosk-mode");
   document.body.classList.toggle("night-mode", state.nightMode);
@@ -2104,6 +2290,7 @@ function applyDisplayPreferences() {
   elements.nightDim.value = String(state.nightDim);
   elements.nightSchedule.checked = state.nightScheduleEnabled;
   elements.emergencyNightChime.checked = state.emergencyNightChimeEnabled;
+  if (elements.displayPreset) elements.displayPreset.value = state.displayPreset || "wall";
   elements.nightStart.value = state.nightStart;
   elements.nightEnd.value = state.nightEnd;
   elements.displayMode.innerHTML = state.displayMode
@@ -2120,6 +2307,7 @@ function applyDisplayPreferences() {
   window.localStorage.setItem("skyWatchEmergencyNightChime", String(state.emergencyNightChimeEnabled));
   window.localStorage.setItem("skyWatchNightStart", state.nightStart);
   window.localStorage.setItem("skyWatchNightEnd", state.nightEnd);
+  window.localStorage.setItem("skyWatchDisplayPreset", state.displayPreset || "wall");
   if (state.displayMode) requestWakeLock();
   else releaseWakeLock();
   updateBurnInShift();
@@ -2174,6 +2362,21 @@ function updateNightControls() {
   state.emergencyNightChimeEnabled = elements.emergencyNightChime.checked;
   state.nightStart = elements.nightStart.value || "22:00";
   state.nightEnd = elements.nightEnd.value || "07:00";
+  applyDisplayPreferences();
+}
+
+function updateDisplayPreset() {
+  state.displayPreset = elements.displayPreset?.value || "wall";
+  if (state.displayPreset === "bedside") {
+    state.displayMode = true;
+    state.nightMode = true;
+    state.nightDim = Math.max(0.2, Number(state.nightDim) || 0.2);
+  } else if (state.displayPreset === "testing") {
+    state.displayMode = true;
+    state.nightMode = false;
+  } else {
+    state.displayMode = true;
+  }
   applyDisplayPreferences();
 }
 
@@ -2445,6 +2648,7 @@ async function refreshAircraft() {
       state.spotlightIndex = 0;
     }
     updateMilitaryLog();
+    updateRescueLog();
     rememberTracks(state.aircraft);
     updateHighlights();
     elements.source.textContent = `${result.source} · auto 60s`;
@@ -2572,6 +2776,7 @@ elements.nightSchedule.addEventListener("change", updateNightControls);
 elements.emergencyNightChime.addEventListener("change", updateNightControls);
 elements.nightStart.addEventListener("change", updateNightControls);
 elements.nightEnd.addEventListener("change", updateNightControls);
+elements.displayPreset?.addEventListener("change", updateDisplayPreset);
 elements.chime.addEventListener("click", toggleChime);
 elements.testAlert.addEventListener("click", testAirAmbulanceAlert);
 elements.radius.addEventListener("change", () => {
@@ -2579,6 +2784,15 @@ elements.radius.addEventListener("change", () => {
   refreshAircraft();
 });
 elements.filter.addEventListener("input", applyFilter);
+for (const button of elements.aircraftFilters) {
+  button.addEventListener("click", () => setAircraftCategory(button.dataset.aircraftFilter));
+}
+elements.nearestList?.addEventListener("click", (event) => {
+  const row = event.target.closest("[data-aircraft-key]");
+  if (!row) return;
+  const aircraft = state.filtered.find((item) => aircraftKey(item) === row.dataset.aircraftKey);
+  if (aircraft) selectAircraft(aircraft);
+});
 window.addEventListener("resize", drawRadar);
 ["pointerdown", "keydown", "touchstart"].forEach((eventName) => window.addEventListener(eventName, markUserInput, { passive: true }));
 document.addEventListener("visibilitychange", () => {

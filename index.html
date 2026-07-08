@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display26" />
+    <link rel="stylesheet" href="./styles.css?v=display28" />
   </head>
   <body class="kiosk-mode setup-active">
     <main class="app-shell">
@@ -90,6 +90,15 @@
             </select>
           </label>
           <label>
+            Display preset
+            <select id="displayPresetSelect">
+              <option value="wall">Wall display</option>
+              <option value="kitchen">Kitchen glance</option>
+              <option value="bedside">Bedside dim</option>
+              <option value="testing">Testing</option>
+            </select>
+          </label>
+          <label>
             Latitude
             <input id="latInput" type="number" step="0.0001" inputmode="decimal" />
           </label>
@@ -151,13 +160,18 @@
             <span aria-hidden="true">!</span>
             Test alert
           </button>
-          <p class="wake-hint">For permanent wall display, set iPad Auto-Lock to Never if available, or use Guided Access Display Auto-Lock.</p>
+          <p class="wake-hint">iPad: open the website in Safari, tap Share, Add to Home Screen, then use Display Mode. For all-day use, set Auto-Lock to Never where available or use Guided Access.</p>
         </div>
       </section>
 
       <section class="display-feed" aria-live="polite">
         <div id="feedStatus" class="feed-status">Feeds standing by</div>
         <div id="wakeStatus" class="wake-status">Display Mode off</div>
+      </section>
+
+      <section class="home-status-bar" aria-live="polite">
+        <div id="homeStatus" class="home-status">Base station waiting</div>
+        <div id="screenHealth" class="screen-health">Screen health starting</div>
       </section>
 
       <section class="status-strip" aria-live="polite">
@@ -290,6 +304,32 @@
       </section>
 
       <section class="workspace">
+        <section class="nearest-panel" aria-label="Nearest aircraft summary">
+          <div class="table-heading">
+            <h2>Nearest 5</h2>
+            <div class="aircraft-filter-bar" aria-label="Aircraft category filters">
+              <button type="button" data-aircraft-filter="all">All</button>
+              <button type="button" data-aircraft-filter="passenger">Passenger</button>
+              <button type="button" data-aircraft-filter="helicopters">Helicopters</button>
+              <button type="button" data-aircraft-filter="rescue">Rescue</button>
+              <button type="button" data-aircraft-filter="military">Military</button>
+            </div>
+          </div>
+          <div id="nearestAircraftList" class="nearest-list">
+            <div class="empty-state">Waiting for aircraft within selected radius</div>
+          </div>
+        </section>
+
+        <section class="rescue-log-panel" aria-label="Rescue aircraft activity log">
+          <div class="table-heading">
+            <h2>Rescue activity</h2>
+            <span class="panel-note">Last 48 hours</span>
+          </div>
+          <div id="rescueLogList" class="rescue-log-list">
+            <div class="empty-state">No air ambulance or Coastguard activity logged yet</div>
+          </div>
+        </section>
+
         <section class="table-panel" aria-label="Nearby aircraft">
           <div class="table-heading">
             <h2>Aircraft</h2>
@@ -352,6 +392,6 @@
     </section>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display26" defer></script>
+    <script src="./app.js?v=display28" defer></script>
   </body>
 </html>
