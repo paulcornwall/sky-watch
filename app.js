@@ -65,6 +65,7 @@ const elements = {
   map: document.querySelector("#mapView"),
   mapLabel: document.querySelector("#mapLabel"),
   mapRangeLabel: document.querySelector("#mapRangeLabel"),
+  radarSelection: document.querySelector("#radarSelection"),
   canvas: document.querySelector("#radarCanvas"),
   spotlightLogo: document.querySelector("#spotlightLogo"),
   spotlightFlight: document.querySelector("#spotlightFlight"),
@@ -211,6 +212,7 @@ let state = {
   planeMarkers: [],
   trackLines: [],
   trackHistory: new Map(),
+  radarHitTargets: [],
   selectedAircraftKey: "",
   airAmbulanceAlerted: new Set(),
   emergencyCloseAlerted: new Set(),
@@ -1683,10 +1685,12 @@ function initMap() {
 function aircraftIcon(aircraft) {
   const reasonClass = aircraft.specialReason ? aircraft.specialReason.toLowerCase().replace(/[^a-z0-9]+/g, "-") : "";
   const heading = mapHeading(aircraft);
+  const label = aircraft.specialReason ? aircraft.specialReason.replace("Air ambulance", "AIR AMB") : aircraft.flight;
+  const selected = state.selectedAircraftKey && aircraftKey(aircraft) === state.selectedAircraftKey;
   return L.divIcon({
     className: "",
-    html: `<span class="plane-map-marker${aircraft.specialReason ? ` special ${reasonClass}` : ""}" style="--heading:${heading}deg"><span class="plane-shape"></span></span>`,
-    iconSize: aircraft.specialReason ? [34, 34] : [28, 28],
+    html: `<span class="plane-map-marker${aircraft.specialReason ? ` special ${reasonClass}` : ""}${selected ? " selected" : ""}" style="--heading:${heading}deg" data-label="${escapeHtml(label)}"><span class="plane-shape"></span></span>`,
+    iconSize: aircraft.specialReason ? [80, 42] : [72, 38],
     iconAnchor: aircraft.specialReason ? [17, 17] : [14, 14],
   });
 }
@@ -1761,6 +1765,34 @@ function selectAircraft(aircraft) {
   if (index >= 0) state.spotlightIndex = Math.min(index, 2);
   elements.mapLabel.textContent = aircraft.specialReason ? `Tracking ${aircraft.specialReason}` : `Track ${aircraft.flight}`;
   renderSpotlight();
+  renderRadarSelection(aircraft);
+  drawRadar();
+}
+
+function renderRadarSelection(aircraft) {
+  if (!elements.radarSelection) return;
+  if (!aircraft) {
+    elements.radarSelection.hidden = true;
+    return;
+  }
+  elements.radarSelection.hidden = false;
+  elements.radarSelection.innerHTML = `
+    <strong>${escapeHtml(displayServiceName(aircraft))}</strong>
+    <span>${escapeHtml(aircraft.flight)} · ${escapeHtml(formatDistance(aircraft.distance))} · ${escapeHtml(formatAltitude(aircraft.altitude))} · ${escapeHtml(formatSpeed(aircraft.speed))}</span>
+    <small>${escapeHtml(aircraft.airAmbulanceStatus || aircraft.specialReason || aircraft.status || "Live aircraft")}</small>
+  `;
+}
+
+function selectRadarCanvasAircraft(event) {
+  if (!state.radarHitTargets.length) return;
+  const rect = elements.canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const hit = state.radarHitTargets
+    .map((target) => ({ ...target, hitDistance: Math.hypot(target.x - x, target.y - y) }))
+    .filter((target) => target.hitDistance <= target.radius)
+    .sort((a, b) => a.hitDistance - b.hitDistance)[0];
+  if (hit) selectAircraft(hit.aircraft);
 }
 
 function setRadarExpanded(expanded, userInitiated = false) {
@@ -2570,6 +2602,7 @@ function drawRadar() {
 
   const tracked = priorityAircraft();
   const trackedPositions = new Map();
+  state.radarHitTargets = [];
   for (const aircraft of state.filtered) {
     const distanceRatio = Math.min(1, aircraft.distance / range);
     const radians = ((aircraft.bearing || 0) * Math.PI) / 180;
@@ -2606,6 +2639,23 @@ function drawRadar() {
     if (!current) continue;
     const color = aircraft.specialReason ? "#f0bd61" : aircraft.altitude === "ground" ? "#f0bd61" : "#7ccad7";
     drawPlane(ctx, current.x, current.y, aircraft.heading || aircraft.bearing, color);
+    const selected = aircraftKey(aircraft) === state.selectedAircraftKey;
+    const label = aircraft.specialReason ? aircraft.specialReason.replace("Air ambulance", "AIR AMB") : aircraft.flight;
+    ctx.save();
+    ctx.font = `${selected || aircraft.specialReason ? 12 : 10}px "Share Tech Mono", monospace`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = selected || aircraft.specialReason ? "rgba(255, 209, 92, 0.96)" : "rgba(215, 255, 226, 0.72)";
+    ctx.shadowColor = selected || aircraft.specialReason ? "rgba(255, 209, 92, 0.5)" : "rgba(61, 255, 127, 0.28)";
+    ctx.shadowBlur = 8;
+    ctx.fillText(String(label || "").slice(0, 10).toUpperCase(), current.x, current.y + 15);
+    ctx.restore();
+    state.radarHitTargets.push({
+      x: current.x,
+      y: current.y,
+      radius: aircraft.specialReason || aircraftKey(aircraft) === state.selectedAircraftKey ? 28 : 22,
+      aircraft,
+    });
   }
 }
 
@@ -2784,6 +2834,7 @@ elements.radius.addEventListener("change", () => {
   refreshAircraft();
 });
 elements.filter.addEventListener("input", applyFilter);
+elements.canvas.addEventListener("click", selectRadarCanvasAircraft);
 for (const button of elements.aircraftFilters) {
   button.addEventListener("click", () => setAircraftCategory(button.dataset.aircraftFilter));
 }
@@ -2805,7 +2856,7 @@ if (storedRadius && [...elements.radius.options].some((option) => option.value =
 }
 if (launchPosition) {
   const queryRadius = Number(new URLSearchParams(window.location.search).get("radius"));
-  if ([10, 25, 50, 100].includes(queryRadius)) {
+  if ([5, 10, 25, 50].includes(queryRadius)) {
     elements.radius.value = String(queryRadius);
     window.localStorage.setItem("skyWatchRadius", elements.radius.value);
   }

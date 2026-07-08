@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display30" />
+    <link rel="stylesheet" href="./styles.css?v=display32" />
   </head>
   <body class="kiosk-mode setup-active">
     <main class="app-shell">
@@ -74,19 +74,19 @@
             <span aria-hidden="true">♪</span>
             Chime off
           </button>
-          <button id="kioskButton" type="button" title="Show or hide controls">
-            <span aria-hidden="true">☰</span>
-            Controls
+          <button id="kioskButton" class="settings-button" type="button" title="Open settings">
+            <span aria-hidden="true">⚙</span>
+            Settings
           </button>
         </div>
         <div class="controls">
           <label>
             Radius
             <select id="radiusSelect">
+              <option value="5">5 miles</option>
               <option value="10">10 miles</option>
               <option value="25">25 miles</option>
               <option value="50" selected>50 miles</option>
-              <option value="100">100 miles</option>
             </select>
           </label>
           <label>
@@ -282,6 +282,10 @@
             <strong id="mapRangeLabel">50 mi radius</strong>
             <button id="expandRadarButton" type="button">Expand</button>
           </div>
+          <div id="radarSelection" class="radar-selection" hidden>
+            <strong>Track selected</strong>
+            <span>Tap aircraft for details</span>
+          </div>
           <div class="compass-label north">N</div>
           <div class="compass-label east">E</div>
           <div class="compass-label south">S</div>
@@ -387,6 +391,6 @@
     </section>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display30" defer></script>
+    <script src="./app.js?v=display32" defer></script>
   </body>
 </html>
