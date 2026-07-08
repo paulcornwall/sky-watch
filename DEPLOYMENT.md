@@ -14,19 +14,7 @@ This folder is ready to run as a small hosted Python web app.
 5. Deploy the service.
 6. Open the Render URL on the wall iPad.
 
-The app will keep your home location in that browser after you tap `Locate` or enter coordinates and refresh.
-
-## Optional Flight Times
-
-For scheduled/estimated departure and arrival times, add an Aviationstack API key in Render:
-
-1. Open your Render web service.
-2. Go to **Environment**.
-3. Add `AVIATIONSTACK_API_KEY`.
-4. Paste your Aviationstack key as the value.
-5. Redeploy.
-
-Without this key, Sky Watch still uses live ADS-B position feeds and ADSBDB route lookup where available, but many flights will show `Flight times unavailable`.
+The app will keep your home location in that browser after you use postcode setup, tap `Locate`, or enter coordinates and refresh.
 
 ## Other Hosts
 

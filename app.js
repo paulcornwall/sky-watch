@@ -7,6 +7,10 @@ const elements = {
   kiosk: document.querySelector("#kioskButton"),
   displayMode: document.querySelector("#displayModeButton"),
   nightMode: document.querySelector("#nightModeButton"),
+  nightDim: document.querySelector("#nightDimSelect"),
+  nightSchedule: document.querySelector("#nightScheduleToggle"),
+  nightStart: document.querySelector("#nightStartInput"),
+  nightEnd: document.querySelector("#nightEndInput"),
   chime: document.querySelector("#chimeButton"),
   testAlert: document.querySelector("#testAlertButton"),
   changeLocation: document.querySelector("#changeLocationButton"),
@@ -29,6 +33,7 @@ const elements = {
   rainAlert: document.querySelector("#rainAlert"),
   rainAlertTitle: document.querySelector("#rainAlertTitle"),
   rainAlertText: document.querySelector("#rainAlertText"),
+  forecastVisual: document.querySelector("#forecastVisual"),
   tickerTrack: document.querySelector("#tickerTrack"),
   filter: document.querySelector("#filterInput"),
   rows: document.querySelector("#aircraftRows"),
@@ -62,7 +67,6 @@ const elements = {
   spotlightSpeed: document.querySelector("#spotlightSpeed"),
   spotlightType: document.querySelector("#spotlightType"),
   spotlightSeen: document.querySelector("#spotlightSeen"),
-  spotlightTimes: document.querySelector("#spotlightTimes"),
   closestToday: document.querySelector("#closestToday"),
   lowestToday: document.querySelector("#lowestToday"),
 };
@@ -126,10 +130,14 @@ const airlineBranding = {
 };
 
 const liveServerAvailable = ["http:", "https:"].includes(window.location.protocol);
-const fallbackPosition = { lat: 51.5074, lon: -0.1278, label: "London fallback" };
+const fallbackPosition = { lat: 51.5074, lon: -0.1278, label: "London demo" };
 const savedPosition = loadSavedPosition();
 const storedDisplayMode = window.localStorage.getItem("skyWatchDisplayMode") === "true";
 const storedNightMode = window.localStorage.getItem("skyWatchNightMode") === "true";
+const storedNightDim = window.localStorage.getItem("skyWatchNightDim") || "0.2";
+const storedNightSchedule = window.localStorage.getItem("skyWatchNightSchedule") === "true";
+const storedNightStart = window.localStorage.getItem("skyWatchNightStart") || "22:00";
+const storedNightEnd = window.localStorage.getItem("skyWatchNightEnd") || "07:00";
 const storedAirAmbulanceZoom = window.localStorage.getItem("skyWatchAirAmbulanceZoom") !== "false";
 const storedAutoCollapse = window.localStorage.getItem("skyWatchAutoCollapseMap") !== "false";
 const airAmbulancePhoto = "./assets/cornwall-air-ambulance-photo.png";
@@ -149,6 +157,7 @@ let state = {
   spotlightTimer: null,
   staleTimer: null,
   burnInTimer: null,
+  nightScheduleTimer: null,
   spotlightIndex: 0,
   lastUpdatedAt: null,
   lastRefreshAttemptAt: null,
@@ -180,6 +189,10 @@ let state = {
   wakeLockSupported: "wakeLock" in navigator,
   displayMode: storedDisplayMode,
   nightMode: storedNightMode,
+  nightDim: Number(storedNightDim),
+  nightScheduleEnabled: storedNightSchedule,
+  nightStart: storedNightStart,
+  nightEnd: storedNightEnd,
   weather: [],
   currentTemperature: null,
   weatherUpdatedAt: null,
@@ -191,6 +204,7 @@ let state = {
   autoCollapseTimer: null,
   feedMode: liveServerAvailable ? "live server" : "browser direct",
   locationMode: savedPosition ? "saved home" : "fallback location",
+  homeLabel: savedPosition?.label || fallbackPosition.label,
 };
 
 const demoAircraft = [
@@ -334,6 +348,14 @@ function formatAge(timestamp) {
   return `${Math.round(seconds / 60)}m ago`;
 }
 
+function formatHoursMinutesSince(timestamp) {
+  if (!timestamp) return "--:--";
+  const totalMinutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
 function formatHour(value) {
   return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
@@ -373,6 +395,34 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function normaliseLocationLabel(value, fallback = "Saved home") {
+  const label = String(value || "").trim().replace(/\s+/g, " ");
+  if (!label) return fallback;
+  if (/^[a-z]{1,2}\d/i.test(label.replace(/\s/g, ""))) return label.toUpperCase();
+  return label;
+}
+
+function isFallbackPosition(position) {
+  return (
+    Number.isFinite(position?.lat) &&
+    Number.isFinite(position?.lon) &&
+    Math.abs(Number(position.lat) - fallbackPosition.lat) < 0.0001 &&
+    Math.abs(Number(position.lon) - fallbackPosition.lon) < 0.0001
+  );
+}
+
+function setFallbackPreview(message = "Using London demo location. Set your real base under Controls > Location.") {
+  elements.lat.value = fallbackPosition.lat.toFixed(5);
+  elements.lon.value = fallbackPosition.lon.toFixed(5);
+  state.userPosition = { ...fallbackPosition };
+  state.homeLabel = fallbackPosition.label;
+  state.locationMode = "fallback location";
+  hideLocationSetup();
+  setMessage(message, true);
+  refreshAircraft();
+  fetchWeather(state.userPosition);
+}
+
 function loadSavedPosition() {
   try {
     const saved = JSON.parse(
@@ -381,11 +431,12 @@ function loadSavedPosition() {
         "null",
     );
     if (Number.isFinite(saved?.lat) && Number.isFinite(saved?.lon)) {
-      const isOldFallback =
-        Math.abs(saved.lat - fallbackPosition.lat) < 0.0001 &&
-        Math.abs(saved.lon - fallbackPosition.lon) < 0.0001;
-      if (isOldFallback) return null;
-      return saved;
+      if (isFallbackPosition(saved)) return null;
+      return {
+        lat: Number(saved.lat),
+        lon: Number(saved.lon),
+        label: normaliseLocationLabel(saved.label),
+      };
     }
   } catch (error) {
     console.warn(error);
@@ -427,14 +478,32 @@ function applyHomePosition(position, message = "Base position saved on this devi
   }
   elements.lat.value = lat.toFixed(5);
   elements.lon.value = lon.toFixed(5);
-  savePosition({ lat, lon, label: position.label || "" });
-  state.userPosition = { lat, lon };
-  state.locationMode = position.label ? `saved home · ${position.label}` : "saved home";
+  const label = normaliseLocationLabel(position.label);
+  savePosition({ lat, lon, label });
+  state.userPosition = { lat, lon, label };
+  state.homeLabel = label;
+  state.locationMode = `saved home · ${label}`;
   hideLocationSetup();
   setMessage(message, true);
   refreshAircraft();
   fetchWeather(state.userPosition);
   return true;
+}
+
+async function lookupPostcodeDirect(postcode) {
+  const compactPostcode = postcode.replace(/\s+/g, "");
+  const response = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(compactPostcode)}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`Postcodes.io returned ${response.status}`);
+  const data = await response.json();
+  const result = data.result || {};
+  return {
+    postcode: result.postcode || postcode,
+    lat: result.latitude,
+    lon: result.longitude,
+    source: "postcodes.io",
+  };
 }
 
 async function setLocationFromPostcode() {
@@ -443,34 +512,35 @@ async function setLocationFromPostcode() {
     elements.setupStatus.textContent = "Enter a postcode first";
     return;
   }
+  elements.postcodeButton.disabled = true;
   elements.setupStatus.textContent = "Looking up postcode...";
   try {
     let payload;
     if (liveServerAvailable) {
       const url = new URL("/api/postcode", window.location.origin);
       url.search = new URLSearchParams({ postcode }).toString();
-      const response = await fetch(url, { cache: "no-store" });
-      if (!response.ok) throw new Error("Postcode lookup failed");
-      payload = await response.json();
+      try {
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) throw new Error(`Sky Watch postcode route returned ${response.status}`);
+        payload = await response.json();
+      } catch (serverError) {
+        console.warn(serverError);
+        elements.setupStatus.textContent = "Trying UK postcode service...";
+        payload = await lookupPostcodeDirect(postcode);
+      }
     } else {
-      const response = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(postcode.replace(/\s+/g, ""))}`, {
-        cache: "no-store",
-      });
-      if (!response.ok) throw new Error("Postcode lookup failed");
-      const data = await response.json();
-      payload = {
-        postcode: data.result?.postcode || postcode,
-        lat: data.result?.latitude,
-        lon: data.result?.longitude,
-      };
+      payload = await lookupPostcodeDirect(postcode);
     }
-    applyHomePosition(
-      { lat: Number(payload.lat), lon: Number(payload.lon), label: payload.postcode || postcode.toUpperCase() },
-      `Base position saved from ${payload.postcode || postcode.toUpperCase()}.`,
+    const saved = applyHomePosition(
+      { lat: Number(payload.lat), lon: Number(payload.lon), label: normaliseLocationLabel(payload.postcode || postcode) },
+      `Base position saved from ${normaliseLocationLabel(payload.postcode || postcode)}.`,
     );
+    if (saved) elements.setupStatus.textContent = `Saved ${normaliseLocationLabel(payload.postcode || postcode)}`;
   } catch (error) {
     console.warn(error);
-    elements.setupStatus.textContent = "Postcode not found. Try again or use auto locate.";
+    elements.setupStatus.textContent = "Postcode not found. Check spacing, e.g. TR1 3LQ, or use auto locate.";
+  } finally {
+    elements.postcodeButton.disabled = false;
   }
 }
 
@@ -531,6 +601,32 @@ function rainWindow() {
   return { firstRain, strongestRain, rainHours };
 }
 
+function forecastSummary24() {
+  if (!state.weather.length) return "24h forecast unavailable";
+  const temps = state.weather.map((hour) => Number(hour.temperature)).filter(Number.isFinite);
+  const { firstRain, strongestRain } = rainWindow();
+  const tempText = temps.length
+    ? `${Math.round(Math.min(...temps))}-${Math.round(Math.max(...temps))}°C`
+    : "temp unavailable";
+  if (firstRain) {
+    return `24h forecast: rain ${formatLeadTime(firstRain.timestamp)} · peak risk ${strongestRain?.rainChance || firstRain.rainChance}% · ${tempText}`;
+  }
+  return `24h forecast: dry outlook · ${tempText}`;
+}
+
+function updateForecastVisual() {
+  const visual = elements.forecastVisual;
+  if (!visual) return;
+  const symbol = visual.querySelector(".weather-symbol");
+  const { firstRain, strongestRain } = rainWindow();
+  const urgent = strongestRain?.rainChance >= 75 || strongestRain?.rainAmount >= 1;
+  const mode = !state.weather.length ? "unavailable" : urgent ? "urgent" : firstRain ? "wet" : "dry";
+  visual.className = `forecast-visual ${mode}`;
+  if (symbol) {
+    symbol.textContent = mode === "dry" ? "☀" : mode === "wet" ? "☔" : mode === "urgent" ? "!" : "?";
+  }
+}
+
 function bitcoinTrendLabel() {
   if (!state.bitcoin?.usd) return "BTC price loading";
   const price = formatCurrency(state.bitcoin.usd);
@@ -546,13 +642,15 @@ function renderTicker() {
   if (Number.isFinite(state.currentTemperature)) {
     items.push(`Local temp ${Math.round(state.currentTemperature)}°C`);
   }
+  items.push(forecastSummary24());
+
   if (firstRain) {
     items.push(`Rain ${formatLeadTime(firstRain.timestamp)} around ${formatHour(firstRain.time)} - bring washing in`);
     if (strongestRain && strongestRain !== firstRain) {
       items.push(`Heaviest shower risk ${formatHour(strongestRain.time)} at ${strongestRain.rainChance}%`);
     }
   } else if (state.weather.length) {
-    items.push("Washing watch: no rain expected in the next 12 hours");
+    items.push("Washing watch: no rain expected in the next 24 hours");
   } else {
     items.push("Weather feed unavailable - rain watch paused");
   }
@@ -562,7 +660,7 @@ function renderTicker() {
   }
 
   if (state.locationMode === "fallback location") {
-    items.push("Home location not set - tap Locate or enter coordinates");
+    items.push("Base location not set - using London demo preview");
   }
 
   const special = state.filtered.find((aircraft) => aircraft.specialReason);
@@ -574,7 +672,7 @@ function renderTicker() {
 
   if (state.militaryLog[0]) {
     const latest = state.militaryLog[0];
-    items.push(`Military log: ${latest.flight} within ${formatDistance(Number(latest.distance))} ${formatAge(latest.time)}`);
+    items.push(`Military log: ${latest.flight} within ${formatDistance(Number(latest.distance))} ${formatHoursMinutesSince(latest.time)} ago`);
   }
 
   for (const item of state.news.slice(0, 3)) {
@@ -582,7 +680,6 @@ function renderTicker() {
   }
 
   items.push(bitcoinTrendLabel());
-  items.push(`Feeds ${state.feedMode}`);
 
   items.push(`Local time ${elements.localTime.textContent}`);
   const text = items.map((item) => `<span>${escapeHtml(item)}</span>`).join("");
@@ -620,6 +717,7 @@ function renderWeather() {
     elements.rainAlert.classList.remove("active");
     elements.rainAlertTitle.textContent = "Rain watch";
     elements.rainAlertText.textContent = "Forecast unavailable";
+    updateForecastVisual();
     renderTemperature();
     renderTicker();
     return;
@@ -629,14 +727,15 @@ function renderWeather() {
   elements.rainAlert.classList.toggle("active", Boolean(firstRain));
   if (firstRain) {
     elements.rainAlertTitle.textContent = "Incoming rain";
-    elements.rainAlertText.textContent = `${formatLeadTime(firstRain.timestamp)} at ${formatHour(firstRain.time)} · ${firstRain.rainChance}% chance`;
+    elements.rainAlertText.textContent = `${formatLeadTime(firstRain.timestamp)} at ${formatHour(firstRain.time)} · ${firstRain.rainChance}% chance · 24h watch`;
   } else {
     const warmest = state.weather.reduce((best, hour) => (hour.temperature > best.temperature ? hour : best), state.weather[0]);
     elements.rainAlertTitle.textContent = "Washing safe";
-    elements.rainAlertText.textContent = `Dry next 12h · peak ${Math.round(warmest.temperature)}° at ${formatHour(warmest.time)}`;
+    elements.rainAlertText.textContent = `Dry next 24h · peak ${Math.round(warmest.temperature)}° at ${formatHour(warmest.time)}`;
   }
   if (strongestRain?.rainChance >= 75 || strongestRain?.rainAmount >= 1) elements.rainAlert.classList.add("urgent");
   else elements.rainAlert.classList.remove("urgent");
+  updateForecastVisual();
   renderTemperature();
   renderTicker();
 }
@@ -680,7 +779,7 @@ async function fetchWeather(position) {
         code: Number(data.hourly.weather_code?.[index] || 0),
       }))
       .filter((hour) => hour.timestamp >= now - 60 * 60 * 1000)
-      .slice(0, 12);
+      .slice(0, 24);
     state.currentTemperature = Number(data.current?.temperature_2m ?? state.weather[0]?.temperature);
     state.weatherUpdatedAt = Date.now();
   } catch (error) {
@@ -710,7 +809,7 @@ async function fetchWeather(position) {
           code: Number(data.hourly.weather_code?.[index] || 0),
         }))
         .filter((hour) => hour.timestamp >= now - 60 * 60 * 1000)
-        .slice(0, 12);
+        .slice(0, 24);
       state.currentTemperature = Number(data.current?.temperature_2m ?? state.weather[0]?.temperature);
     } catch (fallbackError) {
       console.warn(fallbackError);
@@ -932,24 +1031,6 @@ function routeLabel(name, code = "") {
   return routeName || routeCode || "";
 }
 
-function routeTimeValue(...values) {
-  for (const value of values) {
-    const time = formatTime(value);
-    if (time) return time;
-  }
-  return "";
-}
-
-function flightTimesMarkup(aircraft, compact = false) {
-  const lines = [];
-  if (aircraft.departureScheduled) lines.push(`Scheduled departure: ${aircraft.departureScheduled}`);
-  if (aircraft.departureEstimated) lines.push(`Estimated departure: ${aircraft.departureEstimated}`);
-  if (aircraft.arrivalEstimated) lines.push(`Estimated arrival: ${aircraft.arrivalEstimated}`);
-  else if (aircraft.arrivalScheduled) lines.push(`Scheduled arrival: ${aircraft.arrivalScheduled}`);
-  if (!lines.length) lines.push("Flight times unavailable");
-  return `<span class="flight-times${compact ? " compact" : ""}">${lines.map((line) => `<small>${escapeHtml(line)}</small>`).join("")}</span>`;
-}
-
 function routeCellMarkup(name, code = "") {
   const routeName = String(name || "").trim();
   const routeCode = String(code || "").trim().toUpperCase();
@@ -1145,10 +1226,6 @@ function normalizeAircraft(item, origin) {
     fromCode: item.fromCode || item.originCode || routeAirportCode(originRoute),
     to: routeAirportName(destinationRoute) || "Route lookup pending",
     toCode: item.toCode || item.destinationCode || routeAirportCode(destinationRoute),
-    departureScheduled: formatTime(item.departureScheduled || item.scheduledDeparture || item.dep_time || item.departure_time),
-    departureEstimated: formatTime(item.departureEstimated || item.estimatedDeparture),
-    arrivalScheduled: formatTime(item.arrivalScheduled || item.scheduledArrival || item.arr_time || item.arrival_time),
-    arrivalEstimated: formatTime(item.arrivalEstimated || item.estimatedArrival),
     distance,
     bearing: Number.isFinite(lat) && Number.isFinite(lon) ? bearingBetween(origin.lat, origin.lon, lat, lon) : 0,
     heading: Number(item.track ?? item.nav_heading ?? item.heading ?? 0),
@@ -1175,6 +1252,14 @@ function distanceFromCoords(a, b) {
   return 2 * radius * Math.asin(Math.sqrt(h));
 }
 
+function aircraftListFromPayload(payload) {
+  if (Array.isArray(payload?.ac)) return payload.ac;
+  if (Array.isArray(payload?.aircraft)) return payload.aircraft;
+  if (Array.isArray(payload?.data?.ac)) return payload.data.ac;
+  if (Array.isArray(payload?.data?.aircraft)) return payload.data.aircraft;
+  return [];
+}
+
 async function fetchAircraft(position, radiusMiles) {
   const radiusNm = Math.max(1, Math.round(milesToNauticalMiles(radiusMiles)));
   if (liveServerAvailable) {
@@ -1188,10 +1273,10 @@ async function fetchAircraft(position, radiusMiles) {
       const response = await fetch(url, { cache: "no-store" });
       if (!response.ok) throw new Error(`Aircraft feed returned ${response.status}`);
       const payload = await response.json();
-      const list = Array.isArray(payload.data?.ac) ? payload.data.ac : [];
+      const list = aircraftListFromPayload(payload.data || payload);
       return {
         aircraft: list.map((item) => normalizeAircraft(item, position)).filter((item) => Number.isFinite(item.distance)),
-        source: `${payload.source || "Live feed"} · live`,
+        source: `${payload.source || "Live feed"} · ${list.length} tracks`,
       };
     } catch (error) {
       console.warn(error);
@@ -1201,6 +1286,7 @@ async function fetchAircraft(position, radiusMiles) {
   const endpoints = [
     `https://api.adsb.lol/v2/lat/${position.lat}/lon/${position.lon}/dist/${radiusNm}`,
     `https://opendata.adsb.fi/api/v2/lat/${position.lat}/lon/${position.lon}/dist/${radiusNm}`,
+    `https://api.airplanes.live/v2/point/${position.lat}/${position.lon}/${radiusNm}`,
   ];
 
   for (const endpoint of endpoints) {
@@ -1208,10 +1294,10 @@ async function fetchAircraft(position, radiusMiles) {
       const response = await fetch(endpoint, { cache: "no-store" });
       if (!response.ok) throw new Error(`Aircraft feed returned ${response.status}`);
       const data = await response.json();
-      const list = Array.isArray(data.ac) ? data.ac : [];
+      const list = aircraftListFromPayload(data);
       return {
         aircraft: list.map((item) => normalizeAircraft(item, position)).filter((item) => Number.isFinite(item.distance)),
-        source: new URL(endpoint).hostname,
+        source: `${new URL(endpoint).hostname} · ${list.length} tracks`,
       };
     } catch (error) {
       console.warn(error);
@@ -1261,42 +1347,8 @@ function extractRouteDetails(payload) {
     compactRouteName(route.operator) ||
     compactRouteName(route.airline?.name) ||
     compactRouteName(payload?.data?.response?.aircraft?.operator);
-  const departure = route.departure || route.dep || route.origin || {};
-  const arrival = route.arrival || route.arr || route.destination || {};
-  const departureScheduled = routeTimeValue(
-    route.scheduled_departure,
-    route.scheduledDeparture,
-    route.departure_scheduled,
-    departure.scheduled,
-    departure.scheduled_time,
-    departure.time_scheduled,
-  );
-  const departureEstimated = routeTimeValue(
-    route.estimated_departure,
-    route.estimatedDeparture,
-    route.departure_estimated,
-    departure.estimated,
-    departure.estimated_time,
-    departure.time_estimated,
-  );
-  const arrivalScheduled = routeTimeValue(
-    route.scheduled_arrival,
-    route.scheduledArrival,
-    route.arrival_scheduled,
-    arrival.scheduled,
-    arrival.scheduled_time,
-    arrival.time_scheduled,
-  );
-  const arrivalEstimated = routeTimeValue(
-    route.estimated_arrival,
-    route.estimatedArrival,
-    route.arrival_estimated,
-    arrival.estimated,
-    arrival.estimated_time,
-    arrival.time_estimated,
-  );
   if (!from && !to && !fromCode && !toCode && !airline) return null;
-  return { from, fromCode, to, toCode, airline, departureScheduled, departureEstimated, arrivalScheduled, arrivalEstimated };
+  return { from, fromCode, to, toCode, airline };
 }
 
 function routeNeedsLookup(aircraft) {
@@ -1345,10 +1397,6 @@ async function enrichAircraftRoutes(aircraftList) {
     if (details.fromCode) aircraft.fromCode = details.fromCode;
     if (details.to) aircraft.to = details.to;
     if (details.toCode) aircraft.toCode = details.toCode;
-    if (details.departureScheduled) aircraft.departureScheduled = details.departureScheduled;
-    if (details.departureEstimated) aircraft.departureEstimated = details.departureEstimated;
-    if (details.arrivalScheduled) aircraft.arrivalScheduled = details.arrivalScheduled;
-    if (details.arrivalEstimated) aircraft.arrivalEstimated = details.arrivalEstimated;
   }
   return aircraftList;
 }
@@ -1455,7 +1503,6 @@ function aircraftPopupHtml(aircraft) {
         <div><dt>Bearing</dt><dd>${escapeHtml(formatDirection(aircraft.bearing))}</dd></div>
         <div><dt>From</dt><dd>${routeCellMarkup(aircraft.from, aircraft.fromCode)}</dd></div>
         <div><dt>To</dt><dd>${routeCellMarkup(aircraft.to, aircraft.toCode)}</dd></div>
-        <div><dt>Times</dt><dd>${flightTimesMarkup(aircraft, true)}</dd></div>
         <div><dt>Seen</dt><dd>${escapeHtml(formatAge(aircraft.seenAt || state.lastUpdatedAt))}</dd></div>
       </dl>
     </div>
@@ -1474,7 +1521,19 @@ function setRadarExpanded(expanded, userInitiated = false) {
   state.radarExpanded = Boolean(expanded);
   if (userInitiated) state.lastInputAt = Date.now();
   document.body.classList.toggle("radar-expanded", state.radarExpanded);
-  elements.expandRadar.textContent = state.radarExpanded ? "Close" : "Expand";
+  const ambulance = activeAirAmbulance();
+  elements.expandRadar.textContent = state.radarExpanded ? "Close radar" : "Expand radar";
+  elements.mapLabel.textContent = state.radarExpanded
+    ? ambulance
+      ? "Air ambulance close focus"
+      : "Expanded sector map"
+    : "Live sector map";
+  elements.mapRangeLabel.textContent =
+    state.radarExpanded && ambulance
+      ? `AA focus · ${formatDistance(ambulance.distance)}`
+      : state.radarExpanded
+        ? `${Math.min(Number(elements.radius.value) || 50, 25)} mi expanded`
+      : elements.mapRangeLabel.textContent;
   window.setTimeout(() => {
     state.map?.invalidateSize();
     updateMap();
@@ -1508,17 +1567,33 @@ function updateMap() {
   initMap();
   const radius = Number(elements.radius.value);
   const tracked = priorityAircraft();
-  elements.mapRangeLabel.textContent = tracked?.specialReason ? `${tracked.flight} · ${formatDistance(tracked.distance)}` : `${radius} mi radius`;
+  const mapRadius = state.radarExpanded
+    ? tracked?.specialReason
+      ? Math.max(5, Math.ceil(Number(tracked.distance) + 1))
+      : Math.min(radius, 25)
+    : radius;
+  elements.mapRangeLabel.textContent = state.radarExpanded && tracked?.specialReason
+    ? `${tracked.flight} focus · ${formatDistance(tracked.distance)}`
+    : state.radarExpanded
+      ? `${mapRadius} mi expanded`
+    : tracked?.specialReason
+      ? `${tracked.flight} · ${formatDistance(tracked.distance)}`
+      : `${radius} mi radius`;
   if (!state.mapReady || !state.map || !state.userPosition) return;
 
   const position = [state.userPosition.lat, state.userPosition.lon];
-  if ((state.radarExpanded || tracked?.specialReason) && tracked?.specialReason && Number.isFinite(tracked.lat) && Number.isFinite(tracked.lon)) {
-    const bounds = L.latLngBounds([position, [tracked.lat, tracked.lon]]).pad(0.34);
-    state.map.fitBounds(bounds, { animate: true, maxZoom: state.radarExpanded ? 13 : 10, padding: [34, 34] });
-    elements.mapLabel.textContent = `Tracking ${tracked.specialReason}`;
+  if (state.radarExpanded && tracked?.specialReason && Number.isFinite(tracked.lat) && Number.isFinite(tracked.lon)) {
+    const bounds = L.latLngBounds([position, [tracked.lat, tracked.lon]]).pad(state.radarExpanded ? 0.18 : 0.34);
+    state.map.fitBounds(bounds, { animate: true, maxZoom: state.radarExpanded ? 14 : 10, padding: [42, 42] });
+    elements.mapLabel.textContent = state.radarExpanded ? `${tracked.specialReason} close focus` : `Tracking ${tracked.specialReason}`;
   } else {
-    state.map.setView(position, radius <= 25 ? 9 : radius <= 50 ? 8 : 7, { animate: false });
-    elements.mapLabel.textContent = "Live sector map";
+    const radiusBounds = L.circle(position, { radius: milesToMeters(mapRadius) }).getBounds();
+    state.map.fitBounds(radiusBounds, {
+      animate: false,
+      maxZoom: state.radarExpanded ? 11 : 12,
+      padding: state.radarExpanded ? [24, 24] : [18, 18],
+    });
+    elements.mapLabel.textContent = tracked?.specialReason && !state.radarExpanded ? `Priority in ${mapRadius} mi sector` : state.radarExpanded ? "Expanded sector map" : "Live sector map";
   }
 
   if (!state.homeMarker) {
@@ -1538,10 +1613,10 @@ function updateMap() {
   for (const ring of state.rangeRings) ring.remove();
   state.rangeRings = [0.25, 0.5, 0.75, 1].map((scale) =>
     L.circle(position, {
-      radius: milesToMeters(radius * scale),
-      color: scale === 1 ? "#69d38d" : "#7ccad7",
-      weight: scale === 1 ? 2 : 1,
-      opacity: scale === 1 ? 0.75 : 0.42,
+      radius: milesToMeters(mapRadius * scale),
+      color: state.radarExpanded ? "#ffd15c" : scale === 1 ? "#69d38d" : "#7ccad7",
+      weight: state.radarExpanded && scale === 1 ? 3 : scale === 1 ? 2 : 1,
+      opacity: state.radarExpanded ? 0.68 : scale === 1 ? 0.75 : 0.42,
       fill: false,
       interactive: false,
     }).addTo(state.map),
@@ -1580,14 +1655,6 @@ function updateMap() {
         maxWidth: 320,
       });
       marker.on("click", () => selectAircraft(aircraft));
-      if (aircraft.specialReason || aircraft === tracked) {
-        marker.bindTooltip(markerLabel(aircraft), {
-          permanent: true,
-          direction: "top",
-          offset: [0, -16],
-          className: `aircraft-map-label${aircraft.specialReason ? " special" : ""}`,
-        });
-      }
       return marker;
     });
 
@@ -1635,7 +1702,6 @@ function renderTable() {
       <td>${formatSpeed(aircraft.speed)}</td>
       <td class="${routeNeedsLookup(aircraft) ? "unknown" : ""}">${routeCellMarkup(aircraft.from, aircraft.fromCode)}</td>
       <td class="${routeNeedsLookup(aircraft) ? "unknown" : ""}">${routeCellMarkup(aircraft.to, aircraft.toCode)}</td>
-      <td>${flightTimesMarkup(aircraft, true)}</td>
       <td>${formatDistance(aircraft.distance)}</td>
       <td>${formatAge(aircraft.seenAt || state.lastUpdatedAt)}</td>
     `;
@@ -1657,7 +1723,8 @@ function renderStats() {
   elements.closestToday.textContent = state.closestToday ? formatDistance(state.closestToday) : "--";
   elements.lowestToday.textContent = state.lowestToday ? formatAltitude(state.lowestToday) : "--";
   if (state.userPosition) {
-    elements.center.textContent = `${state.userPosition.lat.toFixed(4)}, ${state.userPosition.lon.toFixed(4)}`;
+    const label = state.locationMode === "fallback location" ? fallbackPosition.label : state.homeLabel || "Saved home";
+    elements.center.textContent = `${label} · ${state.userPosition.lat.toFixed(4)}, ${state.userPosition.lon.toFixed(4)}`;
   }
   renderSpotlight();
   renderAirAmbulanceWatch();
@@ -1692,7 +1759,6 @@ function renderSpotlight() {
     elements.spotlightSpeed.textContent = "--";
     elements.spotlightType.textContent = "--";
     elements.spotlightSeen.textContent = "--";
-    elements.spotlightTimes.textContent = "Flight times unavailable";
     return;
   }
 
@@ -1705,7 +1771,6 @@ function renderSpotlight() {
   elements.spotlightStatus.className = `spotlight-status${aircraft.specialReason ? " special" : ""}`;
   elements.spotlightFrom.innerHTML = routeCellMarkup(aircraft.from, aircraft.fromCode);
   elements.spotlightTo.innerHTML = routeCellMarkup(aircraft.to, aircraft.toCode);
-  elements.spotlightTimes.innerHTML = flightTimesMarkup(aircraft);
   elements.spotlightDistance.textContent = formatDistance(aircraft.distance);
   elements.spotlightDirection.textContent = formatDirection(aircraft.bearing);
   elements.spotlightAltitude.textContent = formatAltitude(aircraft.altitude);
@@ -1755,7 +1820,7 @@ function renderMilitaryLog() {
   elements.militaryLogCount.textContent = state.militaryLog.length.toLocaleString();
   const latest = state.militaryLog[0];
   elements.militaryLogText.textContent = latest
-    ? `${latest.flight} ${formatDistance(Number(latest.distance))} · ${formatAge(latest.time)}`
+    ? `${latest.flight} ${formatDistance(Number(latest.distance))} · ${formatHoursMinutesSince(latest.time)} ago`
     : "military within 5 mi";
 }
 
@@ -1798,9 +1863,23 @@ function renderAirAmbulanceAlert() {
   }
 }
 
+function minutesFromTime(value) {
+  const [hours, minutes] = String(value || "00:00").split(":").map(Number);
+  return (Number.isFinite(hours) ? hours : 0) * 60 + (Number.isFinite(minutes) ? minutes : 0);
+}
+
+function scheduledNightActive(now = new Date()) {
+  if (!state.nightScheduleEnabled) return false;
+  const current = now.getHours() * 60 + now.getMinutes();
+  const start = minutesFromTime(state.nightStart);
+  const end = minutesFromTime(state.nightEnd);
+  if (start === end) return true;
+  if (start < end) return current >= start && current < end;
+  return current >= start || current < end;
+}
+
 function quietHoursActive() {
-  const hour = new Date().getHours();
-  return state.nightMode && (hour >= 22 || hour < 7);
+  return state.nightMode;
 }
 
 function testAirAmbulanceAlert() {
@@ -1814,18 +1893,28 @@ function toggleKiosk() {
 }
 
 function applyDisplayPreferences() {
+  if (state.nightScheduleEnabled) state.nightMode = scheduledNightActive();
   document.body.classList.toggle("display-mode", state.displayMode);
   document.body.classList.toggle("night-mode", state.nightMode);
+  document.documentElement.style.setProperty("--night-dim", String(state.nightDim));
   elements.displayMode.classList.toggle("armed", state.displayMode);
   elements.nightMode.classList.toggle("armed", state.nightMode);
+  elements.nightDim.value = String(state.nightDim);
+  elements.nightSchedule.checked = state.nightScheduleEnabled;
+  elements.nightStart.value = state.nightStart;
+  elements.nightEnd.value = state.nightEnd;
   elements.displayMode.innerHTML = state.displayMode
     ? '<span aria-hidden="true">▣</span> Display on'
     : '<span aria-hidden="true">▣</span> Display Mode';
   elements.nightMode.innerHTML = state.nightMode
-    ? '<span aria-hidden="true">◐</span> Night on'
+    ? '<span aria-hidden="true">◐</span> Night dim'
     : '<span aria-hidden="true">◐</span> Night';
   window.localStorage.setItem("skyWatchDisplayMode", String(state.displayMode));
   window.localStorage.setItem("skyWatchNightMode", String(state.nightMode));
+  window.localStorage.setItem("skyWatchNightDim", String(state.nightDim));
+  window.localStorage.setItem("skyWatchNightSchedule", String(state.nightScheduleEnabled));
+  window.localStorage.setItem("skyWatchNightStart", state.nightStart);
+  window.localStorage.setItem("skyWatchNightEnd", state.nightEnd);
   if (state.displayMode) requestWakeLock();
   else releaseWakeLock();
   updateBurnInShift();
@@ -1869,7 +1958,16 @@ function toggleDisplayMode() {
 }
 
 function toggleNightMode() {
+  state.nightScheduleEnabled = false;
   state.nightMode = !state.nightMode;
+  applyDisplayPreferences();
+}
+
+function updateNightControls() {
+  state.nightDim = Number(elements.nightDim.value) || 0.2;
+  state.nightScheduleEnabled = elements.nightSchedule.checked;
+  state.nightStart = elements.nightStart.value || "22:00";
+  state.nightEnd = elements.nightEnd.value || "07:00";
   applyDisplayPreferences();
 }
 
@@ -2097,9 +2195,6 @@ function drawRadar() {
     if (!current) continue;
     const color = aircraft.specialReason ? "#f0bd61" : aircraft.altitude === "ground" ? "#f0bd61" : "#7ccad7";
     drawPlane(ctx, current.x, current.y, aircraft.heading || aircraft.bearing, color);
-    if (aircraft.specialReason || aircraft === tracked) {
-      drawMapLabel(ctx, aircraft.specialReason ? `${aircraft.specialReason} ${aircraft.flight}` : aircraft.flight, current.x, current.y, color, width);
-    }
   }
 }
 
@@ -2166,7 +2261,7 @@ function locateUser() {
   navigator.geolocation.getCurrentPosition(
     (position) => {
       applyHomePosition(
-        { lat: position.coords.latitude, lon: position.coords.longitude, label: "auto locate" },
+        { lat: position.coords.latitude, lon: position.coords.longitude, label: "Auto locate" },
         "Base position saved from auto locate.",
       );
     },
@@ -2192,8 +2287,8 @@ function updateBurnInShift() {
     return;
   }
   const offsets = [[0, 0], [3, -2], [-2, 3], [4, 2], [-3, -2], [2, 4], [-4, 1], [1, -4]];
-  const [x, y] = offsets[Math.floor(Date.now() / 180000) % offsets.length];
-  document.documentElement.style.setProperty("--burn-x", `${x}px`);
+  const [, y] = offsets[Math.floor(Date.now() / 180000) % offsets.length];
+  document.documentElement.style.setProperty("--burn-x", "0px");
   document.documentElement.style.setProperty("--burn-y", `${y}px`);
 }
 
@@ -2214,8 +2309,7 @@ elements.postcodeInput.addEventListener("keydown", (event) => {
 });
 elements.setupLocate.addEventListener("click", locateUser);
 elements.setupLater.addEventListener("click", () => {
-  hideLocationSetup();
-  setMessage("Using fallback location. Change it any time under Controls > Location.", true);
+  setFallbackPreview();
 });
 elements.expandRadar.addEventListener("click", () => setRadarExpanded(!state.radarExpanded, true));
 elements.expandRadarAlert.addEventListener("click", () => setRadarExpanded(true, true));
@@ -2234,15 +2328,29 @@ elements.refresh.addEventListener("click", () => {
   const lat = Number(elements.lat.value);
   const lon = Number(elements.lon.value);
   if (Number.isFinite(lat) && Number.isFinite(lon)) {
-    savePosition({ lat, lon });
-    state.locationMode = "saved home";
-    setMessage("Base position saved on this device.", true);
+    const label = isFallbackPosition({ lat, lon }) ? fallbackPosition.label : normaliseLocationLabel(state.homeLabel, "Manual coordinates");
+    if (isFallbackPosition({ lat, lon })) {
+      state.locationMode = "fallback location";
+      state.homeLabel = fallbackPosition.label;
+      state.userPosition = { ...fallbackPosition };
+      setMessage("Using London demo location. Set your real base under Controls > Location.", true);
+    } else {
+      savePosition({ lat, lon, label });
+      state.userPosition = { lat, lon, label };
+      state.homeLabel = label;
+      state.locationMode = `saved home · ${label}`;
+      setMessage("Base position saved on this device.", true);
+    }
   }
   refreshAircraft();
 });
 elements.kiosk.addEventListener("click", toggleKiosk);
 elements.displayMode.addEventListener("click", toggleDisplayMode);
 elements.nightMode.addEventListener("click", toggleNightMode);
+elements.nightDim.addEventListener("change", updateNightControls);
+elements.nightSchedule.addEventListener("change", updateNightControls);
+elements.nightStart.addEventListener("change", updateNightControls);
+elements.nightEnd.addEventListener("change", updateNightControls);
 elements.chime.addEventListener("click", toggleChime);
 elements.testAlert.addEventListener("click", testAirAmbulanceAlert);
 elements.radius.addEventListener("change", refreshAircraft);
@@ -2256,7 +2364,7 @@ document.addEventListener("visibilitychange", () => {
 const initialPosition = savedPosition || fallbackPosition;
 elements.lat.value = initialPosition.lat.toFixed(5);
 elements.lon.value = initialPosition.lon.toFixed(5);
-state.userPosition = { lat: initialPosition.lat, lon: initialPosition.lon };
+state.userPosition = { lat: initialPosition.lat, lon: initialPosition.lon, label: initialPosition.label };
 applyDisplayPreferences();
 renderStats();
 updateDateTime();
@@ -2265,7 +2373,7 @@ renderTicker();
 registerServiceWorker();
 animate();
 if (!savedPosition) {
-  setMessage("Set a base location with postcode or auto locate. Using fallback until saved.", true);
+  setMessage("Set your base with postcode or auto locate. London demo is only a temporary preview.", true);
   showLocationSetup("Enter postcode or use auto locate to set base");
 }
 refreshAircraft();
@@ -2280,6 +2388,9 @@ state.dateClock = window.setInterval(updateDateTime, 1000);
 state.staleTimer = window.setInterval(renderFeedStatus, 30000);
 state.burnInTimer = window.setInterval(updateBurnInShift, 3 * 60 * 1000);
 state.autoCollapseTimer = window.setInterval(collapseExpandedMapIfIdle, 60 * 1000);
+state.nightScheduleTimer = window.setInterval(() => {
+  if (state.nightScheduleEnabled) applyDisplayPreferences();
+}, 60 * 1000);
 state.spotlightTimer = window.setInterval(() => {
   const limit = Math.min(3, state.filtered.length);
   if (limit > 1) {

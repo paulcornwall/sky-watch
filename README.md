@@ -23,7 +23,7 @@ The app:
 - Fits an iPad-sized wall display in landscape and portrait orientations.
 - Shows the local day, date, month and time in the header.
 - Shows a fixed current temperature module beside the date and time.
-- Shows a washing-focused rain alert for the next 12 hours.
+- Shows a washing-focused rain alert and forecast for the next 24 hours.
 - Uses a scrolling live ticker for local temperature, rain, aircraft, special alerts, local time and BTC.
 - Adds breaking-news headlines to the live board when the news feed is available.
 - Shows live BTC price in USD with a 6 hour trend arrow when the market feed is available.
@@ -32,7 +32,6 @@ The app:
 - Shows movement status such as approaching, passing nearby, overhead or moving away.
 - Shows flight number, airline, altitude, origin, destination and distance.
 - Looks up origin and destination for routeable airline callsigns when the live server can reach ADSBDB.
-- Shows scheduled or estimated flight times when the route provider includes them, with a discreet fallback when unavailable.
 - Converts aircraft speed to mph for the display.
 - Shows aircraft type when the aircraft feed includes it.
 - Tracks closest aircraft today and lowest altitude seen.
@@ -61,7 +60,7 @@ The app:
 
 ADS-B feeds normally provide aircraft position, callsign, speed, heading and altitude. They do not reliably include route origin and destination. The live server now attempts a route lookup for recognised airline callsigns and shows airport codes when available. Private, military, emergency and unknown identifiers may still show `Route lookup pending` because those routes are not published in the same way.
 
-Route origin, destination and timetable data usually need a separate provider such as AeroDataBox, Aviationstack, FlightAware or a FlightRadar-style route service. The live server supports an optional `AVIATIONSTACK_API_KEY` environment variable for scheduled/estimated flight times. Keep API keys on the server, not in browser JavaScript.
+Route origin and destination usually need a separate provider such as ADSBDB, AeroDataBox, FlightAware or a FlightRadar-style route service. Keep API keys on the server, not in browser JavaScript.
 
 ## Map Note
 

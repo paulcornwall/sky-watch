@@ -115,6 +115,7 @@ class LiveFeedHandler(SimpleHTTPRequestHandler):
         endpoints = [
             f"https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{radius}",
             f"https://opendata.adsb.fi/api/v2/lat/{lat}/lon/{lon}/dist/{radius}",
+            f"https://api.airplanes.live/v2/point/{lat}/{lon}/{radius}",
         ]
         errors = []
         for endpoint in endpoints:
@@ -135,20 +136,6 @@ class LiveFeedHandler(SimpleHTTPRequestHandler):
         if not callsign:
             json_response(self, {"error": "callsign is required"}, 400)
             return
-
-        aviationstack_key = os.environ.get("AVIATIONSTACK_API_KEY", "").strip()
-        if aviationstack_key:
-            endpoint = (
-                "http://api.aviationstack.com/v1/flights?"
-                f"access_key={aviationstack_key}&flight_icao={callsign}"
-            )
-            try:
-                data = cached(f"route:aviationstack:{callsign}", CACHE_SECONDS["route"], lambda: fetch_json(endpoint))
-                if data.get("data"):
-                    json_response(self, {"source": "aviationstack.com", "data": data})
-                    return
-            except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
-                pass
 
         endpoint = f"https://api.adsbdb.com/v0/callsign/{callsign}"
         data = cached(f"route:{callsign}", CACHE_SECONDS["route"], lambda: fetch_json(endpoint))

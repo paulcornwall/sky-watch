@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display8" />
+    <link rel="stylesheet" href="./styles.css?v=display14" />
   </head>
   <body class="kiosk-mode">
     <main class="app-shell">
@@ -98,6 +98,28 @@
             <span aria-hidden="true">◐</span>
             Night
           </button>
+          <label>
+            Dim
+            <select id="nightDimSelect">
+              <option value="0.1">10%</option>
+              <option value="0.2" selected>20%</option>
+              <option value="0.3">30%</option>
+              <option value="0.4">40%</option>
+              <option value="0.5">50%</option>
+            </select>
+          </label>
+          <label class="control-check">
+            <input id="nightScheduleToggle" type="checkbox" />
+            Schedule night
+          </label>
+          <label>
+            Night from
+            <input id="nightStartInput" type="time" value="22:00" />
+          </label>
+          <label>
+            Night until
+            <input id="nightEndInput" type="time" value="07:00" />
+          </label>
           <button id="changeLocationButton" type="button" title="Change saved base location">
             <span aria-hidden="true">⌖</span>
             Location
@@ -121,15 +143,13 @@
       <section class="status-strip" aria-live="polite">
         <div class="rain-status-tile">
           <div class="rain-alert" id="rainAlert">
-            <div class="rain-icon" aria-hidden="true">
-              <span class="cloud"></span>
-              <span class="drop one"></span>
-              <span class="drop two"></span>
-              <span class="drop three"></span>
+            <div class="forecast-visual unavailable" id="forecastVisual" aria-hidden="true">
+              <span class="weather-symbol">?</span>
+              <span class="weather-pulse"></span>
             </div>
             <div>
               <strong id="rainAlertTitle">Rain watch</strong>
-              <span id="rainAlertText">Checking next 12 hours</span>
+              <span id="rainAlertText">Checking next 24 hours</span>
             </div>
           </div>
         </div>
@@ -183,7 +203,6 @@
             <span aria-hidden="true">→</span>
             <span id="spotlightTo">To unknown</span>
           </div>
-          <div class="flight-times" id="spotlightTimes">Flight times unavailable</div>
           <div class="spotlight-metrics">
             <div>
               <span id="spotlightDistance">--</span>
@@ -271,7 +290,6 @@
                   <th>Speed</th>
                   <th>From</th>
                   <th>To</th>
-                  <th>Times</th>
                   <th>Distance</th>
                   <th>Seen</th>
                 </tr>
@@ -297,13 +315,13 @@
         <div class="setup-actions">
           <button id="postcodeButton" type="button">Use postcode</button>
           <button id="setupLocateButton" type="button">Auto locate</button>
-          <button id="setupLaterButton" type="button">Use fallback</button>
+          <button id="setupLaterButton" type="button">Use London demo</button>
         </div>
         <span id="setupStatus">Waiting for base location</span>
       </div>
     </section>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display8" defer></script>
+    <script src="./app.js?v=display14" defer></script>
   </body>
 </html>
