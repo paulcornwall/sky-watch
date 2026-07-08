@@ -42,7 +42,7 @@ def fetch_json(url):
         url,
         headers={
             "Accept": "application/json",
-            "User-Agent": "SkyWatchWallDisplay/1.0",
+            "User-Agent": "SkyWatchWallDisplay/1.0 PaulMayIndustries",
         },
     )
     with urlopen(request, timeout=TIMEOUT) as response:
@@ -111,6 +111,79 @@ def fetch_airnav_route(callsign):
         if route:
             return route
     return None
+
+
+def metno_weather_code(symbol_code):
+    symbol = (symbol_code or "").lower()
+    if "thunder" in symbol:
+        return 95
+    if "snow" in symbol or "sleet" in symbol:
+        return 71
+    if "rain" in symbol:
+        return 61
+    if "fog" in symbol:
+        return 45
+    if "cloudy" in symbol:
+        return 3
+    if "partlycloudy" in symbol or "fair" in symbol:
+        return 2
+    return 0
+
+
+def metno_rain_chance(amount, symbol_code):
+    try:
+        rain = float(amount or 0)
+    except (TypeError, ValueError):
+        rain = 0
+    symbol = (symbol_code or "").lower()
+    if rain >= 1:
+        return 85
+    if rain >= 0.4:
+        return 70
+    if rain >= 0.1:
+        return 55
+    if rain > 0:
+        return 35
+    if "rain" in symbol or "sleet" in symbol or "snow" in symbol:
+        return 45
+    if "cloud" in symbol:
+        return 15
+    return 5
+
+
+def fetch_metno_weather(lat, lon):
+    endpoint = f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={lat:.4f}&lon={lon:.4f}"
+    data = fetch_json(endpoint)
+    timeseries = data.get("properties", {}).get("timeseries", [])
+    hourly_time = []
+    hourly_temp = []
+    hourly_precip = []
+    hourly_chance = []
+    hourly_code = []
+
+    for item in timeseries[:36]:
+        details = item.get("data", {}).get("instant", {}).get("details", {})
+        next_hour = item.get("data", {}).get("next_1_hours", {})
+        next_details = next_hour.get("details", {})
+        symbol = next_hour.get("summary", {}).get("symbol_code") or item.get("data", {}).get("next_6_hours", {}).get("summary", {}).get("symbol_code")
+        amount = next_details.get("precipitation_amount", 0)
+        hourly_time.append(item.get("time"))
+        hourly_temp.append(details.get("air_temperature"))
+        hourly_precip.append(amount)
+        hourly_chance.append(metno_rain_chance(amount, symbol))
+        hourly_code.append(metno_weather_code(symbol))
+
+    current_temp = hourly_temp[0] if hourly_temp else None
+    return {
+        "current": {"temperature_2m": current_temp},
+        "hourly": {
+            "time": hourly_time,
+            "temperature_2m": hourly_temp,
+            "precipitation_probability": hourly_chance,
+            "precipitation": hourly_precip,
+            "weather_code": hourly_code,
+        },
+    }
 
 
 def cached(key, ttl, loader):
@@ -252,8 +325,22 @@ class LiveFeedHandler(SimpleHTTPRequestHandler):
             "&forecast_days=2&timezone=auto"
         )
         endpoint = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&{query}"
-        data = cached(f"weather:{lat:.4f}:{lon:.4f}", CACHE_SECONDS["weather"], lambda: fetch_json(endpoint))
-        json_response(self, {"source": "open-meteo.com", "data": data})
+        errors = []
+        try:
+            data = cached(f"weather:openmeteo:{lat:.4f}:{lon:.4f}", CACHE_SECONDS["weather"], lambda: fetch_json(endpoint))
+            json_response(self, {"source": "open-meteo.com", "data": data})
+            return
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
+            errors.append(f"open-meteo.com: {error}")
+
+        try:
+            data = cached(f"weather:metno:{lat:.4f}:{lon:.4f}", CACHE_SECONDS["weather"], lambda: fetch_metno_weather(lat, lon))
+            json_response(self, {"source": "api.met.no", "data": data, "fallback": True, "details": errors})
+            return
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
+            errors.append(f"api.met.no: {error}")
+
+        json_response(self, {"error": "Weather feeds unavailable", "details": errors}, 502)
 
     def handle_bitcoin(self):
         endpoint = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1"
