@@ -2302,11 +2302,13 @@ function toggleKiosk() {
     document.body.classList.toggle("kiosk-mode");
     return;
   }
+  if (!document.body.classList.contains("kiosk-mode")) {
+    document.body.classList.add("kiosk-mode");
+    return;
+  }
   document.body.classList.remove("kiosk-mode");
   window.clearTimeout(state.controlsHideTimer);
-  state.controlsHideTimer = window.setTimeout(() => {
-    if (state.displayMode) document.body.classList.add("kiosk-mode");
-  }, 5000);
+  state.controlsHideTimer = null;
 }
 
 function applyDisplayPreferences() {
