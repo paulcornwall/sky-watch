@@ -5,6 +5,7 @@ const elements = {
   locate: document.querySelector("#locateButton"),
   refresh: document.querySelector("#refreshButton"),
   kiosk: document.querySelector("#kioskButton"),
+  settingsClose: document.querySelector("#settingsCloseButton"),
   displayMode: document.querySelector("#displayModeButton"),
   nightMode: document.querySelector("#nightModeButton"),
   nightDim: document.querySelector("#nightDimSelect"),
@@ -2311,6 +2312,12 @@ function toggleKiosk() {
   state.controlsHideTimer = null;
 }
 
+function closeSettingsPanel() {
+  document.body.classList.add("kiosk-mode");
+  window.clearTimeout(state.controlsHideTimer);
+  state.controlsHideTimer = null;
+}
+
 function applyDisplayPreferences() {
   const settingsWereOpen = state.displayMode && !document.body.classList.contains("kiosk-mode");
   if (state.nightScheduleEnabled) state.nightMode = scheduledNightActive();
@@ -2823,6 +2830,7 @@ elements.refresh.addEventListener("click", () => {
   refreshAircraft();
 });
 elements.kiosk.addEventListener("click", toggleKiosk);
+elements.settingsClose.addEventListener("click", closeSettingsPanel);
 elements.displayMode.addEventListener("click", toggleDisplayMode);
 elements.nightMode.addEventListener("click", toggleNightMode);
 elements.nightDim.addEventListener("change", updateNightControls);

@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display35" />
+    <link rel="stylesheet" href="./styles.css?v=display36" />
   </head>
   <body class="kiosk-mode setup-active">
     <main class="app-shell">
@@ -80,6 +80,10 @@
           </button>
         </div>
         <div class="controls">
+          <button id="settingsCloseButton" class="settings-close-button" type="button" title="Close settings">
+            <span aria-hidden="true">×</span>
+            Close
+          </button>
           <label>
             Radius
             <select id="radiusSelect">
@@ -391,6 +395,6 @@
     </section>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display35" defer></script>
+    <script src="./app.js?v=display36" defer></script>
   </body>
 </html>

@@ -3249,12 +3249,46 @@ body.display-mode:not(.kiosk-mode) .controls {
 
 body.display-mode:not(.kiosk-mode) .controls::before {
   content: "Settings";
-  grid-column: 1 / -1;
+  grid-column: 1 / span 2;
   color: var(--accent);
   font-size: 1rem;
   font-weight: 950;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+}
+
+.settings-close-button {
+  display: none;
+}
+
+body.display-mode:not(.kiosk-mode) .settings-close-button {
+  display: inline-flex;
+  grid-column: 3;
+  justify-self: end;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding-inline: 16px;
+  border-color: rgba(255, 209, 92, 0.62);
+  color: var(--amber);
+  background: rgba(30, 23, 4, 0.86);
+  box-shadow: 0 0 18px rgba(255, 209, 92, 0.12);
+}
+
+body.display-mode:not(.kiosk-mode) .settings-close-button span {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+@media (max-width: 700px) {
+  body.display-mode:not(.kiosk-mode) .controls::before {
+    grid-column: 1 / -1;
+  }
+
+  body.display-mode:not(.kiosk-mode) .settings-close-button {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
 }
 
 body.display-mode:not(.kiosk-mode) .controls label,
