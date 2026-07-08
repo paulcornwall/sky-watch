@@ -147,6 +147,8 @@ class LiveFeedHandler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/api/"):
             self.handle_api(parsed)
             return
+        if parsed.path in {"/demo", "/demo/"}:
+            self.path = "/index.html"
         super().do_GET()
 
     def handle_api(self, parsed):

@@ -136,14 +136,17 @@ const airlineBranding = {
 
 const liveServerAvailable = ["http:", "https:"].includes(window.location.protocol);
 const fallbackPosition = { lat: 51.5074, lon: -0.1278, label: "London demo" };
+applyTestReset();
+const launchPosition = readLaunchPosition();
 const savedPosition = loadSavedPosition();
+const bootPosition = launchPosition || savedPosition;
 const storedDisplayModePreference = window.localStorage.getItem("skyWatchDisplayMode");
 const displayModeDefaulted = window.localStorage.getItem("skyWatchDisplayModeDefaulted") === "true";
 const storedDisplayMode =
-  savedPosition && !displayModeDefaulted
+  bootPosition && !displayModeDefaulted
     ? true
     : storedDisplayModePreference == null
-      ? Boolean(savedPosition)
+      ? Boolean(bootPosition)
       : storedDisplayModePreference !== "false";
 const storedNightMode = window.localStorage.getItem("skyWatchNightMode") === "true";
 const storedNightDim = window.localStorage.getItem("skyWatchNightDim") || "0.2";
@@ -155,6 +158,16 @@ const storedAutoCollapse = window.localStorage.getItem("skyWatchAutoCollapseMap"
 const storedRadius = window.localStorage.getItem("skyWatchRadius");
 const airAmbulancePhoto = "./assets/cornwall-air-ambulance-photo.png";
 const logoCache = new Map();
+
+function applyTestReset() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("resetSetup") !== "1") return;
+  for (const key of Object.keys(window.localStorage)) {
+    if (key.startsWith("skyWatch") || key.startsWith("planesNearby")) {
+      window.localStorage.removeItem(key);
+    }
+  }
+}
 
 let state = {
   aircraft: [],
@@ -219,8 +232,8 @@ let state = {
   autoCollapseTimer: null,
   controlsHideTimer: null,
   feedMode: liveServerAvailable ? "live server" : "browser direct",
-  locationMode: savedPosition ? "saved home" : "fallback location",
-  homeLabel: savedPosition?.label || fallbackPosition.label,
+  locationMode: launchPosition ? launchPosition.mode : savedPosition ? "saved home" : "location not set",
+  homeLabel: bootPosition?.label || "",
 };
 
 const demoAircraft = [
@@ -449,16 +462,39 @@ function isFallbackPosition(position) {
   );
 }
 
-function setFallbackPreview(message = "Using London demo location. Set your real base under Controls > Location.") {
-  elements.lat.value = fallbackPosition.lat.toFixed(5);
-  elements.lon.value = fallbackPosition.lon.toFixed(5);
-  state.userPosition = { ...fallbackPosition };
-  state.homeLabel = fallbackPosition.label;
-  state.locationMode = "fallback location";
-  hideLocationSetup();
-  setMessage(message, true);
-  refreshAircraft();
-  fetchWeather(state.userPosition);
+function readLaunchPosition() {
+  const params = new URLSearchParams(window.location.search);
+  const pathname = window.location.pathname.replace(/\/+$/, "").toLowerCase();
+  const demoMode = pathname.endsWith("/demo") || String(params.get("demo") || "").toLowerCase() === "london";
+  const hasLatLon = params.has("lat") && params.has("lon");
+  const lat = hasLatLon ? Number(params.get("lat")) : NaN;
+  const lon = hasLatLon ? Number(params.get("lon")) : NaN;
+  if (hasLatLon && Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+    return {
+      lat,
+      lon,
+      label: params.get("label") ? normaliseLocationLabel(params.get("label")) : "URL location",
+      mode: "url location",
+      sessionOnly: true,
+    };
+  }
+  if (demoMode) {
+    return {
+      ...fallbackPosition,
+      label: "Demo location · London",
+      mode: "demo location",
+      sessionOnly: true,
+      demo: true,
+    };
+  }
+  return null;
+}
+
+function setFallbackPreview(message = "Using demo location. Set your real base under Controls > Location when ready.") {
+  return applyHomePosition(
+    { ...fallbackPosition, label: "Demo location · London", demo: true },
+    message,
+  );
 }
 
 function loadSavedPosition() {
@@ -469,11 +505,12 @@ function loadSavedPosition() {
         "null",
     );
     if (Number.isFinite(saved?.lat) && Number.isFinite(saved?.lon)) {
-      if (isFallbackPosition(saved)) return null;
+      if (isFallbackPosition(saved) && !saved.demo) return null;
       return {
         lat: Number(saved.lat),
         lon: Number(saved.lon),
         label: normaliseLocationLabel(saved.label),
+        demo: Boolean(saved.demo),
       };
     }
   } catch (error) {
@@ -488,6 +525,7 @@ function savePosition(position) {
       lat: Number(position.lat),
       lon: Number(position.lon),
       label: position.label || "",
+      demo: Boolean(position.demo),
       savedAt: Date.now(),
     });
     window.localStorage.setItem("skyWatchHome", saved);
@@ -498,6 +536,7 @@ function savePosition(position) {
 }
 
 function showLocationSetup(message = "Enter postcode or use auto locate") {
+  document.body.classList.add("setup-active");
   elements.locationSetup.hidden = false;
   elements.setupStatus.textContent = message;
   window.setTimeout(() => elements.postcodeInput?.focus(), 50);
@@ -505,6 +544,7 @@ function showLocationSetup(message = "Enter postcode or use auto locate") {
 
 function hideLocationSetup() {
   elements.locationSetup.hidden = true;
+  document.body.classList.remove("setup-active");
 }
 
 function applyHomePosition(position, message = "Base position saved on this device.") {
@@ -517,10 +557,10 @@ function applyHomePosition(position, message = "Base position saved on this devi
   elements.lat.value = lat.toFixed(5);
   elements.lon.value = lon.toFixed(5);
   const label = normaliseLocationLabel(position.label);
-  savePosition({ lat, lon, label });
+  if (!position.sessionOnly) savePosition({ lat, lon, label, demo: Boolean(position.demo) });
   state.userPosition = { lat, lon, label };
   state.homeLabel = label;
-  state.locationMode = `saved home · ${label}`;
+  state.locationMode = position.demo ? "demo location" : position.sessionOnly ? "url location" : `saved home · ${label}`;
   state.displayMode = true;
   hideLocationSetup();
   applyDisplayPreferences();
@@ -2488,13 +2528,29 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state.displayMode) requestWakeLock();
 });
 
-const initialPosition = savedPosition || fallbackPosition;
+const initialPosition = bootPosition;
 if (storedRadius && [...elements.radius.options].some((option) => option.value === storedRadius)) {
   elements.radius.value = storedRadius;
 }
-elements.lat.value = initialPosition.lat.toFixed(5);
-elements.lon.value = initialPosition.lon.toFixed(5);
-state.userPosition = { lat: initialPosition.lat, lon: initialPosition.lon, label: initialPosition.label };
+if (launchPosition) {
+  const queryRadius = Number(new URLSearchParams(window.location.search).get("radius"));
+  if ([10, 25, 50, 100].includes(queryRadius)) {
+    elements.radius.value = String(queryRadius);
+    window.localStorage.setItem("skyWatchRadius", elements.radius.value);
+  }
+}
+if (initialPosition) {
+  elements.lat.value = initialPosition.lat.toFixed(5);
+  elements.lon.value = initialPosition.lon.toFixed(5);
+  state.userPosition = {
+    lat: initialPosition.lat,
+    lon: initialPosition.lon,
+    label: initialPosition.label,
+  };
+} else {
+  elements.lat.value = "";
+  elements.lon.value = "";
+}
 applyDisplayPreferences();
 renderStats();
 updateDateTime();
@@ -2502,13 +2558,18 @@ renderTemperature();
 renderTicker();
 registerServiceWorker();
 animate();
-if (!savedPosition) {
-  setMessage("Set your base with postcode or auto locate. London demo is only a temporary preview.", true);
-  showLocationSetup("Enter postcode or use auto locate to set base");
+if (!initialPosition) {
+  state.displayMode = false;
+  applyDisplayPreferences();
+  setMessage("", false);
+  showLocationSetup("Enter postcode, use auto locate, or start with demo location");
+} else {
+  hideLocationSetup();
+  setMessage(launchPosition ? `${initialPosition.label} active for this session.` : "Base station restored from this device.", true);
+  refreshAircraft();
+  fetchBitcoin();
+  fetchNews();
 }
-refreshAircraft();
-fetchBitcoin();
-fetchNews();
 state.refreshTimer = window.setInterval(refreshAircraft, 60000);
 state.weatherTimer = window.setInterval(() => fetchWeather(state.userPosition), 30 * 60 * 1000);
 state.bitcoinTimer = window.setInterval(fetchBitcoin, 5 * 60 * 1000);

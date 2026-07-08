@@ -21,9 +21,9 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display19" />
+    <link rel="stylesheet" href="./styles.css?v=display23" />
   </head>
-  <body class="kiosk-mode">
+  <body class="kiosk-mode setup-active">
     <main class="app-shell">
       <section class="control-band" aria-label="Aircraft search controls">
         <div class="brand-panel">
@@ -319,9 +319,10 @@
 
     <section class="setup-modal" id="locationSetup" aria-labelledby="locationSetupTitle" hidden>
       <div class="setup-card">
-        <p class="eyebrow">Base station setup</p>
-        <h2 id="locationSetupTitle">Set Sky Watch location</h2>
-        <p>Enter a postcode or use auto locate. This is remembered on this device.</p>
+        <p class="eyebrow">ADS-B terminal // base station</p>
+        <h2 id="locationSetupTitle">Sky Watch</h2>
+        <p class="setup-credit">developed by Paul May Industries</p>
+        <p>Set your base location so Sky Watch can scan aircraft in your area.</p>
         <label>
           Postcode
           <input id="postcodeInput" type="text" autocomplete="postal-code" placeholder="TR1 3LQ" />
@@ -329,13 +330,14 @@
         <div class="setup-actions">
           <button id="postcodeButton" type="button">Use postcode</button>
           <button id="setupLocateButton" type="button">Auto locate</button>
-          <button id="setupLaterButton" type="button">Use London demo</button>
+          <button id="setupLaterButton" type="button">Use demo location</button>
         </div>
+        <p class="privacy-note">Location is saved on this device only.</p>
         <span id="setupStatus">Waiting for base location</span>
       </div>
     </section>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display19" defer></script>
+    <script src="./app.js?v=display23" defer></script>
   </body>
 </html>
