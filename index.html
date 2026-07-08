@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display23" />
+    <link rel="stylesheet" href="./styles.css?v=display24" />
   </head>
   <body class="kiosk-mode setup-active">
     <main class="app-shell">
@@ -332,12 +332,20 @@
           <button id="setupLocateButton" type="button">Auto locate</button>
           <button id="setupLaterButton" type="button">Use demo location</button>
         </div>
+        <div class="tester-bypass" aria-label="Tester bypass">
+          <span>Tester bypass</span>
+          <p>Open a ready-made demo dashboard without setting a real location.</p>
+          <div class="tester-links">
+            <a href="?demo=london">Launch London demo</a>
+            <a href="?lat=50.1028&amp;lon=-5.5435&amp;radius=100">Launch Cornwall test</a>
+          </div>
+        </div>
         <p class="privacy-note">Location is saved on this device only.</p>
         <span id="setupStatus">Waiting for base location</span>
       </div>
     </section>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display23" defer></script>
+    <script src="./app.js?v=display24" defer></script>
   </body>
 </html>

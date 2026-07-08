@@ -187,6 +187,59 @@ body.setup-active .app-shell {
   margin: 12px 0 8px;
 }
 
+.tester-bypass {
+  margin: 16px 0 10px;
+  padding: 12px;
+  border: 1px dashed rgba(61, 255, 127, 0.32);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(61, 255, 127, 0.08), transparent 64%),
+    rgba(0, 0, 0, 0.22);
+}
+
+.tester-bypass > span {
+  display: block;
+  color: var(--accent);
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.tester-bypass p {
+  margin: 6px 0 10px;
+  font-size: 0.82rem;
+}
+
+.tester-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tester-links a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(61, 255, 127, 0.36);
+  border-radius: 7px;
+  background: rgba(4, 30, 17, 0.82);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-align: center;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.tester-links a:hover {
+  border-color: rgba(61, 255, 127, 0.72);
+  color: var(--accent);
+  box-shadow: 0 0 18px rgba(61, 255, 127, 0.16);
+}
+
 .control-band,
 .status-strip,
 .spotlight-card,
@@ -1837,6 +1890,10 @@ tr:nth-child(even) td {
   }
 
   .setup-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .tester-links {
     grid-template-columns: 1fr;
   }
 
