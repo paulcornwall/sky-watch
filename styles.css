@@ -303,6 +303,68 @@ body.display-mode .app-shell {
   filter: saturate(0.55);
 }
 
+.rain-chance-panel {
+  flex: 0 0 86px;
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  min-height: 54px;
+  padding: 8px;
+  border: 1px solid rgba(61, 255, 127, 0.28);
+  border-radius: 7px;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(61, 255, 127, 0.16), transparent 62%),
+    rgba(1, 10, 6, 0.72);
+  box-shadow: inset 0 0 14px rgba(61, 255, 127, 0.08);
+  text-align: center;
+}
+
+.rain-chance-panel span,
+.rain-chance-panel strong {
+  display: block;
+}
+
+.rain-chance-panel span {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+}
+
+.rain-chance-panel strong {
+  color: var(--accent);
+  font-size: clamp(1.32rem, 2vw, 1.9rem);
+  line-height: 1;
+  font-weight: 950;
+  text-shadow: 0 0 14px rgba(61, 255, 127, 0.48);
+}
+
+.rain-chance-panel.wet,
+.rain-chance-panel.urgent {
+  border-color: rgba(255, 209, 92, 0.62);
+  background:
+    radial-gradient(circle at 50% 45%, rgba(255, 209, 92, 0.22), transparent 62%),
+    rgba(18, 11, 2, 0.76);
+}
+
+.rain-chance-panel.wet strong {
+  color: var(--amber);
+  text-shadow: 0 0 14px rgba(255, 209, 92, 0.58);
+}
+
+.rain-chance-panel.urgent {
+  border-color: rgba(255, 91, 91, 0.74);
+}
+
+.rain-chance-panel.urgent strong {
+  color: #ff6f6f;
+  text-shadow: 0 0 16px rgba(255, 91, 91, 0.72);
+}
+
+.rain-chance-panel.unavailable {
+  opacity: 0.72;
+}
+
 @keyframes weather-ping {
   0%,
   100% {

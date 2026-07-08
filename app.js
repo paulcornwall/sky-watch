@@ -33,7 +33,8 @@ const elements = {
   rainAlert: document.querySelector("#rainAlert"),
   rainAlertTitle: document.querySelector("#rainAlertTitle"),
   rainAlertText: document.querySelector("#rainAlertText"),
-  forecastVisual: document.querySelector("#forecastVisual"),
+  rainChancePanel: document.querySelector("#rainChancePanel"),
+  rainChanceValue: document.querySelector("#rainChanceValue"),
   tickerTrack: document.querySelector("#tickerTrack"),
   filter: document.querySelector("#filterInput"),
   rows: document.querySelector("#aircraftRows"),
@@ -601,6 +602,18 @@ function rainWindow() {
   return { firstRain, strongestRain, rainHours };
 }
 
+function rainChanceNextHours(hours = 3) {
+  if (!state.weather.length) return { chance: null, firstRain: null, rainAmount: 0 };
+  const now = Date.now();
+  const windowEnd = now + hours * 60 * 60 * 1000;
+  const hoursInWindow = state.weather.filter((hour) => hour.timestamp >= now - 10 * 60 * 1000 && hour.timestamp <= windowEnd);
+  const sample = hoursInWindow.length ? hoursInWindow : state.weather.slice(0, hours);
+  const chance = sample.reduce((max, hour) => Math.max(max, Number(hour.rainChance) || 0), 0);
+  const rainAmount = sample.reduce((total, hour) => total + (Number(hour.rainAmount) || 0), 0);
+  const firstRain = sample.find((hour) => Number(hour.rainAmount) > 0.1 || Number(hour.rainChance) >= 40) || null;
+  return { chance, firstRain, rainAmount };
+}
+
 function forecastSummary24() {
   if (!state.weather.length) return "24h forecast unavailable";
   const temps = state.weather.map((hour) => Number(hour.temperature)).filter(Number.isFinite);
@@ -615,16 +628,11 @@ function forecastSummary24() {
 }
 
 function updateForecastVisual() {
-  const visual = elements.forecastVisual;
-  if (!visual) return;
-  const symbol = visual.querySelector(".weather-symbol");
-  const { firstRain, strongestRain } = rainWindow();
-  const urgent = strongestRain?.rainChance >= 75 || strongestRain?.rainAmount >= 1;
-  const mode = !state.weather.length ? "unavailable" : urgent ? "urgent" : firstRain ? "wet" : "dry";
-  visual.className = `forecast-visual ${mode}`;
-  if (symbol) {
-    symbol.textContent = mode === "dry" ? "☀" : mode === "wet" ? "☔" : mode === "urgent" ? "!" : "?";
-  }
+  if (!elements.rainChancePanel || !elements.rainChanceValue) return;
+  const { chance, firstRain, rainAmount } = rainChanceNextHours(3);
+  const mode = chance == null ? "unavailable" : chance >= 70 || rainAmount >= 1 ? "urgent" : firstRain ? "wet" : "dry";
+  elements.rainChancePanel.className = `rain-chance-panel ${mode}`;
+  elements.rainChanceValue.textContent = chance == null ? "--%" : `${Math.round(chance)}%`;
 }
 
 function bitcoinTrendLabel() {
@@ -672,7 +680,7 @@ function renderTicker() {
 
   if (state.militaryLog[0]) {
     const latest = state.militaryLog[0];
-    items.push(`Military log: ${latest.flight} within ${formatDistance(Number(latest.distance))} ${formatHoursMinutesSince(latest.time)} ago`);
+    items.push(`Military log: ${latest.flight} within ${formatDistance(Number(latest.distance))} seen ${formatHour(latest.time)}`);
   }
 
   for (const item of state.news.slice(0, 3)) {
@@ -702,7 +710,9 @@ function renderFeedStatus() {
   const stale = minutes != null && minutes >= 5;
   document.body.classList.toggle("data-stale", Boolean(stale || state.feedError));
   if (state.feedError) {
-    elements.feedStatus.textContent = `Feed warning: ${state.feedError}`;
+    elements.feedStatus.textContent = state.lastUpdatedAt
+      ? `Aircraft feed retrying · last live update ${formatAge(state.lastUpdatedAt)}`
+      : `Feed warning: ${state.feedError}`;
   } else if (stale) {
     elements.feedStatus.textContent = `Data last updated ${minutes} minutes ago · attempting to reconnect`;
   } else if (state.lastUpdatedAt) {
@@ -723,17 +733,18 @@ function renderWeather() {
     return;
   }
 
-  const { firstRain, strongestRain } = rainWindow();
-  elements.rainAlert.classList.toggle("active", Boolean(firstRain));
-  if (firstRain) {
+  const nextRain = rainChanceNextHours(3);
+  elements.rainAlert.classList.toggle("active", Boolean(nextRain.firstRain));
+  if (nextRain.firstRain) {
     elements.rainAlertTitle.textContent = "Incoming rain";
-    elements.rainAlertText.textContent = `${formatLeadTime(firstRain.timestamp)} at ${formatHour(firstRain.time)} · ${firstRain.rainChance}% chance · 24h watch`;
+    elements.rainAlertText.textContent = `${formatLeadTime(nextRain.firstRain.timestamp)} at ${formatHour(nextRain.firstRain.time)} · ${Math.round(nextRain.chance)}% chance next 3h`;
   } else {
-    const warmest = state.weather.reduce((best, hour) => (hour.temperature > best.temperature ? hour : best), state.weather[0]);
     elements.rainAlertTitle.textContent = "Washing safe";
-    elements.rainAlertText.textContent = `Dry next 24h · peak ${Math.round(warmest.temperature)}° at ${formatHour(warmest.time)}`;
+    elements.rainAlertText.textContent = nextRain.chance == null
+      ? "Rain chance unavailable"
+      : `${Math.round(nextRain.chance)}% rain chance next 3h`;
   }
-  if (strongestRain?.rainChance >= 75 || strongestRain?.rainAmount >= 1) elements.rainAlert.classList.add("urgent");
+  if (nextRain.chance >= 75 || nextRain.rainAmount >= 1) elements.rainAlert.classList.add("urgent");
   else elements.rainAlert.classList.remove("urgent");
   updateForecastVisual();
   renderTemperature();
@@ -1758,13 +1769,14 @@ function renderStats() {
 }
 
 function renderSpotlight() {
+  const ambulance = activeAirAmbulance();
   const specialList = state.filtered.filter((aircraft) => aircraft.specialReason).sort((a, b) => a.distance - b.distance);
   const regularList = state.filtered.filter((aircraft) => !aircraft.specialReason).sort((a, b) => a.distance - b.distance);
   const spotlightList = [...specialList, ...regularList].slice(0, 3);
   const selectedAircraft = state.selectedAircraftKey
     ? state.filtered.find((item) => aircraftKey(item) === state.selectedAircraftKey)
     : null;
-  const aircraft = selectedAircraft || spotlightList[state.spotlightIndex] || spotlightList[0];
+  const aircraft = ambulance || selectedAircraft || spotlightList[state.spotlightIndex] || spotlightList[0];
   if (!aircraft) {
     elements.spotlightLogo.textContent = "--";
     elements.spotlightLogo.style.setProperty("--logo-a", "#4d5b55");
@@ -1823,18 +1835,18 @@ function renderAirAmbulanceWatch() {
   const aircraft = activeAirAmbulance();
   if (aircraft) {
     elements.airAmbulanceWatch.textContent = "Airborne";
-    elements.airAmbulanceWatchText.textContent = aircraft.airAmbulanceStatus || `${aircraft.flight} ${formatDistance(aircraft.distance)}`;
+    elements.airAmbulanceWatchText.textContent = `${aircraft.flight} · ${aircraft.airAmbulanceStatus || placePhrase(aircraft)} · ${formatDistance(aircraft.distance)}`;
     return;
   }
 
   if (state.lastAirAmbulance && Date.now() - state.lastAirAmbulance.seenAt < 15 * 60 * 1000) {
     elements.airAmbulanceWatch.textContent = "Last seen";
-    elements.airAmbulanceWatchText.textContent = placePhrase(state.lastAirAmbulance.aircraft);
+    elements.airAmbulanceWatchText.textContent = `${formatHour(state.lastAirAmbulance.seenAt)} · ${placePhrase(state.lastAirAmbulance.aircraft)}`;
     return;
   }
 
   elements.airAmbulanceWatch.textContent = "Standby";
-  elements.airAmbulanceWatchText.textContent = "air ambulance watch";
+  elements.airAmbulanceWatchText.textContent = "No Cornwall Air Ambulance track detected";
 }
 
 function renderMilitaryLog() {
@@ -1842,7 +1854,7 @@ function renderMilitaryLog() {
   elements.militaryLogCount.textContent = state.militaryLog.length.toLocaleString();
   const latest = state.militaryLog[0];
   elements.militaryLogText.textContent = latest
-    ? `${latest.flight} ${formatDistance(Number(latest.distance))} · ${formatHoursMinutesSince(latest.time)} ago`
+    ? `${latest.flight} ${formatDistance(Number(latest.distance))} · seen ${formatHour(latest.time)}`
     : "military within 5 mi";
 }
 
@@ -2241,14 +2253,23 @@ async function refreshAircraft() {
   try {
     const result = await fetchAircraft(state.userPosition, radius);
     const nearbyAircraft = result.aircraft.map(decorateAircraft).filter((aircraft) => aircraft.distance <= radius);
-    state.aircraft = await enrichAircraftRoutes(nearbyAircraft);
+    state.feedError = "";
+    state.refreshFailures = 0;
+    try {
+      state.aircraft = await enrichAircraftRoutes(nearbyAircraft);
+    } catch (routeError) {
+      console.warn(routeError);
+      state.aircraft = nearbyAircraft;
+    }
     const ambulance = activeAirAmbulance();
-    if (ambulance) state.lastAirAmbulance = { aircraft: ambulance, seenAt: Date.now() };
+    if (ambulance) {
+      state.lastAirAmbulance = { aircraft: ambulance, seenAt: Date.now() };
+      state.selectedAircraftKey = aircraftKey(ambulance);
+      state.spotlightIndex = 0;
+    }
     updateMilitaryLog();
     rememberTracks(state.aircraft);
     updateHighlights();
-    state.feedError = "";
-    state.refreshFailures = 0;
     elements.source.textContent = `${result.source} · auto 60s`;
     state.lastUpdatedAt = Date.now();
     applyFilter();
@@ -2414,6 +2435,10 @@ state.nightScheduleTimer = window.setInterval(() => {
   if (state.nightScheduleEnabled) applyDisplayPreferences();
 }, 60 * 1000);
 state.spotlightTimer = window.setInterval(() => {
+  if (activeAirAmbulance()) {
+    renderSpotlight();
+    return;
+  }
   const limit = Math.min(3, state.filtered.length);
   if (limit > 1) {
     state.spotlightIndex = (state.spotlightIndex + 1) % limit;

@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display15" />
+    <link rel="stylesheet" href="./styles.css?v=display16" />
   </head>
   <body class="kiosk-mode">
     <main class="app-shell">
@@ -143,9 +143,9 @@
       <section class="status-strip" aria-live="polite">
         <div class="rain-status-tile">
           <div class="rain-alert" id="rainAlert">
-            <div class="forecast-visual unavailable" id="forecastVisual" aria-hidden="true">
-              <span class="weather-symbol">?</span>
-              <span class="weather-pulse"></span>
+            <div class="rain-chance-panel" id="rainChancePanel">
+              <span>Next 3h</span>
+              <strong id="rainChanceValue">--%</strong>
             </div>
             <div>
               <strong id="rainAlertTitle">Rain watch</strong>
@@ -322,6 +322,6 @@
     </section>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display15" defer></script>
+    <script src="./app.js?v=display16" defer></script>
   </body>
 </html>
