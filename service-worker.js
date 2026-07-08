@@ -1,9 +1,9 @@
-const CACHE_NAME = "sky-watch-shell-v16";
+const CACHE_NAME = "sky-watch-shell-v19";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=display16",
-  "./app.js?v=display16",
+  "./styles.css?v=display19",
+  "./app.js?v=display19",
   "./assets/cornwall-air-ambulance-photo.png",
   "./manifest.webmanifest",
   "./icons/sky-watch-icon.svg",
@@ -26,6 +26,20 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (url.pathname.startsWith("/api/")) return;
+  if (event.request.mode === "navigate" || url.pathname.endsWith(".html") || url.pathname === "/") {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./index.html"))),
+    );
+    return;
+  }
   event.respondWith(
     caches.match(event.request).then((cached) =>
       cached ||

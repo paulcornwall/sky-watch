@@ -28,6 +28,9 @@ const elements = {
   localDate: document.querySelector("#localDate"),
   localTime: document.querySelector("#localTime"),
   currentTemperature: document.querySelector("#currentTemperature"),
+  weatherCondition: document.querySelector("#weatherCondition"),
+  weatherRainSummary: document.querySelector("#weatherRainSummary"),
+  weatherUpdatedTime: document.querySelector("#weatherUpdatedTime"),
   feedStatus: document.querySelector("#feedStatus"),
   wakeStatus: document.querySelector("#wakeStatus"),
   rainAlert: document.querySelector("#rainAlert"),
@@ -70,6 +73,7 @@ const elements = {
   spotlightSeen: document.querySelector("#spotlightSeen"),
   closestToday: document.querySelector("#closestToday"),
   lowestToday: document.querySelector("#lowestToday"),
+  spotlightCard: document.querySelector(".spotlight-card"),
 };
 
 const airlinePrefixes = {
@@ -133,7 +137,14 @@ const airlineBranding = {
 const liveServerAvailable = ["http:", "https:"].includes(window.location.protocol);
 const fallbackPosition = { lat: 51.5074, lon: -0.1278, label: "London demo" };
 const savedPosition = loadSavedPosition();
-const storedDisplayMode = window.localStorage.getItem("skyWatchDisplayMode") === "true";
+const storedDisplayModePreference = window.localStorage.getItem("skyWatchDisplayMode");
+const displayModeDefaulted = window.localStorage.getItem("skyWatchDisplayModeDefaulted") === "true";
+const storedDisplayMode =
+  savedPosition && !displayModeDefaulted
+    ? true
+    : storedDisplayModePreference == null
+      ? Boolean(savedPosition)
+      : storedDisplayModePreference !== "false";
 const storedNightMode = window.localStorage.getItem("skyWatchNightMode") === "true";
 const storedNightDim = window.localStorage.getItem("skyWatchNightDim") || "0.2";
 const storedNightSchedule = window.localStorage.getItem("skyWatchNightSchedule") === "true";
@@ -141,6 +152,7 @@ const storedNightStart = window.localStorage.getItem("skyWatchNightStart") || "2
 const storedNightEnd = window.localStorage.getItem("skyWatchNightEnd") || "07:00";
 const storedAirAmbulanceZoom = window.localStorage.getItem("skyWatchAirAmbulanceZoom") !== "false";
 const storedAutoCollapse = window.localStorage.getItem("skyWatchAutoCollapseMap") !== "false";
+const storedRadius = window.localStorage.getItem("skyWatchRadius");
 const airAmbulancePhoto = "./assets/cornwall-air-ambulance-photo.png";
 const logoCache = new Map();
 
@@ -197,12 +209,15 @@ let state = {
   weather: [],
   currentTemperature: null,
   weatherUpdatedAt: null,
+  weatherError: "",
+  weatherFailures: 0,
   bitcoin: null,
   bitcoinUpdatedAt: null,
   news: [],
   newsUpdatedAt: null,
   newsTimer: null,
   autoCollapseTimer: null,
+  controlsHideTimer: null,
   feedMode: liveServerAvailable ? "live server" : "browser direct",
   locationMode: savedPosition ? "saved home" : "fallback location",
   homeLabel: savedPosition?.label || fallbackPosition.label,
@@ -350,7 +365,7 @@ function formatAge(timestamp) {
 }
 
 function formatHoursMinutesSince(timestamp) {
-  if (!timestamp) return "--:--";
+  if (!timestamp) return "Waiting";
   const totalMinutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
@@ -359,6 +374,14 @@ function formatHoursMinutesSince(timestamp) {
 
 function formatHour(value) {
   return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+}
+
+function formatClock(value = new Date(), includeSeconds = false) {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(includeSeconds ? { second: "2-digit" } : {}),
+  }).format(value);
 }
 
 function formatTime(value) {
@@ -376,6 +399,20 @@ function formatLeadTime(timestamp) {
   if (minutes < 10) return "now";
   if (minutes < 90) return `in ${minutes} min`;
   return `in ${Math.round(minutes / 60)} hr`;
+}
+
+function weatherConditionLabel(code) {
+  const value = Number(code);
+  if (!Number.isFinite(value)) return "Weather waiting";
+  if (value === 0) return "Clear";
+  if ([1, 2].includes(value)) return "Partly cloudy";
+  if (value === 3) return "Cloudy";
+  if ([45, 48].includes(value)) return "Fog";
+  if ([51, 53, 55, 56, 57].includes(value)) return "Drizzle";
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(value)) return "Rain";
+  if ([71, 73, 75, 77, 85, 86].includes(value)) return "Snow";
+  if ([95, 96, 99].includes(value)) return "Thunder";
+  return "Weather live";
 }
 
 function formatCurrency(value) {
@@ -484,7 +521,9 @@ function applyHomePosition(position, message = "Base position saved on this devi
   state.userPosition = { lat, lon, label };
   state.homeLabel = label;
   state.locationMode = `saved home · ${label}`;
+  state.displayMode = true;
   hideLocationSetup();
+  applyDisplayPreferences();
   setMessage(message, true);
   refreshAircraft();
   fetchWeather(state.userPosition);
@@ -632,7 +671,7 @@ function updateForecastVisual() {
   const { chance, firstRain, rainAmount } = rainChanceNextHours(3);
   const mode = chance == null ? "unavailable" : chance >= 70 || rainAmount >= 1 ? "urgent" : firstRain ? "wet" : "dry";
   elements.rainChancePanel.className = `rain-chance-panel ${mode}`;
-  elements.rainChanceValue.textContent = chance == null ? "--%" : `${Math.round(chance)}%`;
+  elements.rainChanceValue.textContent = chance == null ? "Waiting" : `${Math.round(chance)}%`;
 }
 
 function bitcoinTrendLabel() {
@@ -697,7 +736,9 @@ function renderTicker() {
 function renderTemperature() {
   elements.currentTemperature.textContent = Number.isFinite(state.currentTemperature)
     ? `${Math.round(state.currentTemperature)}°C`
-    : "--°C";
+    : state.weatherError
+      ? "Weather retrying"
+      : "Waiting";
 }
 
 function staleMinutes() {
@@ -708,46 +749,69 @@ function staleMinutes() {
 function renderFeedStatus() {
   const minutes = staleMinutes();
   const stale = minutes != null && minutes >= 5;
-  document.body.classList.toggle("data-stale", Boolean(stale || state.feedError));
-  if (state.feedError) {
-    elements.feedStatus.textContent = state.lastUpdatedAt
-      ? `Aircraft feed retrying · last live update ${formatAge(state.lastUpdatedAt)}`
-      : `Feed warning: ${state.feedError}`;
-  } else if (stale) {
-    elements.feedStatus.textContent = `Data last updated ${minutes} minutes ago · attempting to reconnect`;
-  } else if (state.lastUpdatedAt) {
-    elements.feedStatus.textContent = `Feeds live · updated ${formatAge(state.lastUpdatedAt)}`;
-  } else {
-    elements.feedStatus.textContent = "Feeds standing by";
-  }
+  const aircraftWarning = Boolean(state.feedError && (!state.lastUpdatedAt || Date.now() - state.lastUpdatedAt > 90000));
+  const aircraftStatus = aircraftWarning
+    ? state.lastUpdatedAt
+      ? "aircraft retrying"
+      : "aircraft waiting"
+    : stale
+      ? "aircraft stale"
+      : state.lastUpdatedAt
+        ? "aircraft live"
+        : "aircraft waiting";
+  const weatherStatus = state.weatherError
+    ? state.weatherUpdatedAt
+      ? "weather retrying"
+      : "weather waiting"
+    : state.weatherUpdatedAt
+      ? "weather live"
+      : "weather waiting";
+  const location = state.locationMode === "fallback location" ? "London demo" : state.homeLabel || "Location waiting";
+  const lastAircraft = state.lastUpdatedAt ? `aircraft ${formatClock(new Date(state.lastUpdatedAt))}` : "aircraft not loaded";
+  const nextRefresh = state.lastRefreshAttemptAt ? `next aircraft refresh ${formatLeadTime(state.lastRefreshAttemptAt + 60000)}` : "next aircraft refresh waiting";
+  const lastWeather = state.weatherUpdatedAt ? `weather ${formatClock(new Date(state.weatherUpdatedAt))}` : "weather not loaded";
+  document.body.classList.toggle("data-stale", Boolean(stale || aircraftWarning || state.weatherError));
+  elements.feedStatus.textContent = `${aircraftStatus} · ${weatherStatus} · ${location} · ${lastAircraft} · ${nextRefresh} · ${lastWeather}`;
 }
 
 function renderWeather() {
   if (!state.weather.length) {
     elements.rainAlert.classList.remove("active");
     elements.rainAlertTitle.textContent = "Rain watch";
-    elements.rainAlertText.textContent = "Forecast unavailable";
+    elements.rainAlertText.textContent = state.weatherError ? "Weather feed retrying" : "Waiting for weather";
+    elements.weatherCondition.textContent = state.weatherError ? "Weather feed retrying" : "Waiting for weather";
+    elements.weatherRainSummary.textContent = state.weatherError ? "Rain check paused" : "Checking next 3h";
+    elements.weatherUpdatedTime.textContent = state.weatherUpdatedAt ? formatClock(new Date(state.weatherUpdatedAt)) : "Waiting";
     updateForecastVisual();
     renderTemperature();
+    renderFeedStatus();
     renderTicker();
     return;
   }
 
   const nextRain = rainChanceNextHours(3);
+  const currentWeather = state.weather.find((hour) => hour.timestamp >= Date.now() - 60 * 60 * 1000) || state.weather[0];
+  elements.weatherCondition.textContent = state.weatherError ? "Weather feed retrying" : weatherConditionLabel(currentWeather?.code);
+  elements.weatherUpdatedTime.textContent = state.weatherUpdatedAt ? formatClock(new Date(state.weatherUpdatedAt)) : "Waiting";
   elements.rainAlert.classList.toggle("active", Boolean(nextRain.firstRain));
   if (nextRain.firstRain) {
     elements.rainAlertTitle.textContent = "Incoming rain";
     elements.rainAlertText.textContent = `${formatLeadTime(nextRain.firstRain.timestamp)} at ${formatHour(nextRain.firstRain.time)} · ${Math.round(nextRain.chance)}% chance next 3h`;
+    elements.weatherRainSummary.textContent = `${Math.round(nextRain.chance)}% · ${formatLeadTime(nextRain.firstRain.timestamp)}`;
   } else {
     elements.rainAlertTitle.textContent = "Washing safe";
     elements.rainAlertText.textContent = nextRain.chance == null
       ? "Rain chance unavailable"
       : `${Math.round(nextRain.chance)}% rain chance next 3h`;
+    elements.weatherRainSummary.textContent = nextRain.chance == null
+      ? "Rain chance unavailable"
+      : `${Math.round(nextRain.chance)}% next 3h`;
   }
   if (nextRain.chance >= 75 || nextRain.rainAmount >= 1) elements.rainAlert.classList.add("urgent");
   else elements.rainAlert.classList.remove("urgent");
   updateForecastVisual();
   renderTemperature();
+  renderFeedStatus();
   renderTicker();
 }
 
@@ -793,8 +857,12 @@ async function fetchWeather(position) {
       .slice(0, 24);
     state.currentTemperature = Number(data.current?.temperature_2m ?? state.weather[0]?.temperature);
     state.weatherUpdatedAt = Date.now();
+    state.weatherError = "";
+    state.weatherFailures = 0;
   } catch (error) {
     console.warn(error);
+    state.weatherFailures += 1;
+    state.weatherError = "weather feed retrying";
     try {
       const directUrl = new URL("https://api.open-meteo.com/v1/forecast");
       directUrl.search = new URLSearchParams({
@@ -822,10 +890,14 @@ async function fetchWeather(position) {
         .filter((hour) => hour.timestamp >= now - 60 * 60 * 1000)
         .slice(0, 24);
       state.currentTemperature = Number(data.current?.temperature_2m ?? state.weather[0]?.temperature);
+      state.weatherUpdatedAt = Date.now();
+      state.weatherError = "";
+      state.weatherFailures = 0;
     } catch (fallbackError) {
       console.warn(fallbackError);
       if (!state.weather.length) state.weather = [];
       if (!Number.isFinite(state.currentTemperature)) state.currentTemperature = null;
+      state.weatherError = "weather feed retrying";
     }
   }
   renderWeather();
@@ -918,10 +990,7 @@ function updateDateTime() {
     month: "long",
     year: "numeric",
   }).format(now);
-  elements.localTime.textContent = new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(now);
+  elements.localTime.textContent = formatClock(now, true);
 }
 
 function formatAircraftType(value) {
@@ -1750,11 +1819,11 @@ function renderTable() {
 
 function renderStats() {
   elements.count.textContent = state.filtered.length.toLocaleString();
-  elements.nearest.textContent = state.filtered[0] ? formatDistance(state.filtered[0].distance) : "--";
+  elements.nearest.textContent = state.filtered[0] ? formatDistance(state.filtered[0].distance) : "Waiting";
   elements.specialCount.textContent = state.filtered.filter((aircraft) => aircraft.specialReason).length.toLocaleString();
   elements.updated.textContent = formatAge(state.lastUpdatedAt);
-  elements.closestToday.textContent = state.closestToday ? formatDistance(state.closestToday) : "--";
-  elements.lowestToday.textContent = state.lowestToday ? formatAltitude(state.lowestToday) : "--";
+  elements.closestToday.textContent = state.closestToday ? formatDistance(state.closestToday) : "Waiting";
+  elements.lowestToday.textContent = state.lowestToday ? formatAltitude(state.lowestToday) : "Waiting";
   if (state.userPosition) {
     const label = state.locationMode === "fallback location" ? fallbackPosition.label : state.homeLabel || "Saved home";
     elements.center.textContent = `${label} · ${state.userPosition.lat.toFixed(4)}, ${state.userPosition.lon.toFixed(4)}`;
@@ -1778,24 +1847,26 @@ function renderSpotlight() {
     : null;
   const aircraft = ambulance || selectedAircraft || spotlightList[state.spotlightIndex] || spotlightList[0];
   if (!aircraft) {
-    elements.spotlightLogo.textContent = "--";
+    elements.spotlightCard.classList.add("no-track");
+    elements.spotlightLogo.textContent = "SW";
     elements.spotlightLogo.style.setProperty("--logo-a", "#4d5b55");
     elements.spotlightLogo.style.setProperty("--logo-b", "#9fb4aa");
-    elements.spotlightFlight.textContent = "No aircraft in range";
-    elements.spotlightAirline.textContent = "Callsign standby";
-    elements.spotlightStatus.textContent = "No movement";
+    elements.spotlightFlight.textContent = "Waiting for aircraft";
+    elements.spotlightAirline.textContent = "No live track selected";
+    elements.spotlightStatus.textContent = "Waiting for aircraft within selected radius";
     elements.spotlightStatus.className = "spotlight-status";
-    elements.spotlightFrom.textContent = "From unknown";
-    elements.spotlightTo.textContent = "To unknown";
-    elements.spotlightDistance.textContent = "--";
-    elements.spotlightDirection.textContent = "--";
-    elements.spotlightAltitude.textContent = "--";
-    elements.spotlightSpeed.textContent = "--";
-    elements.spotlightType.textContent = "--";
-    elements.spotlightSeen.textContent = "--";
+    elements.spotlightFrom.textContent = "";
+    elements.spotlightTo.textContent = "";
+    elements.spotlightDistance.textContent = "";
+    elements.spotlightDirection.textContent = "";
+    elements.spotlightAltitude.textContent = "";
+    elements.spotlightSpeed.textContent = "";
+    elements.spotlightType.textContent = "";
+    elements.spotlightSeen.textContent = "";
     return;
   }
 
+  elements.spotlightCard.classList.remove("no-track");
   setSpotlightLogo(aircraft);
   elements.spotlightFlight.textContent = displayServiceName(aircraft);
   elements.spotlightAirline.textContent = `Callsign ${aircraft.flight}`;
@@ -1923,12 +1994,21 @@ function testAirAmbulanceAlert() {
 }
 
 function toggleKiosk() {
-  document.body.classList.toggle("kiosk-mode");
+  if (!state.displayMode) {
+    document.body.classList.toggle("kiosk-mode");
+    return;
+  }
+  document.body.classList.remove("kiosk-mode");
+  window.clearTimeout(state.controlsHideTimer);
+  state.controlsHideTimer = window.setTimeout(() => {
+    if (state.displayMode) document.body.classList.add("kiosk-mode");
+  }, 5000);
 }
 
 function applyDisplayPreferences() {
   if (state.nightScheduleEnabled) state.nightMode = scheduledNightActive();
   document.body.classList.toggle("display-mode", state.displayMode);
+  if (state.displayMode) document.body.classList.add("kiosk-mode");
   document.body.classList.toggle("night-mode", state.nightMode);
   document.documentElement.style.setProperty("--night-dim", String(state.nightDim));
   elements.displayMode.classList.toggle("armed", state.displayMode);
@@ -1944,6 +2024,7 @@ function applyDisplayPreferences() {
     ? '<span aria-hidden="true">◐</span> Night dim'
     : '<span aria-hidden="true">◐</span> Night';
   window.localStorage.setItem("skyWatchDisplayMode", String(state.displayMode));
+  if (savedPosition) window.localStorage.setItem("skyWatchDisplayModeDefaulted", "true");
   window.localStorage.setItem("skyWatchNightMode", String(state.nightMode));
   window.localStorage.setItem("skyWatchNightDim", String(state.nightDim));
   window.localStorage.setItem("skyWatchNightSchedule", String(state.nightScheduleEnabled));
@@ -2396,7 +2477,10 @@ elements.nightStart.addEventListener("change", updateNightControls);
 elements.nightEnd.addEventListener("change", updateNightControls);
 elements.chime.addEventListener("click", toggleChime);
 elements.testAlert.addEventListener("click", testAirAmbulanceAlert);
-elements.radius.addEventListener("change", refreshAircraft);
+elements.radius.addEventListener("change", () => {
+  window.localStorage.setItem("skyWatchRadius", elements.radius.value);
+  refreshAircraft();
+});
 elements.filter.addEventListener("input", applyFilter);
 window.addEventListener("resize", drawRadar);
 ["pointerdown", "keydown", "touchstart"].forEach((eventName) => window.addEventListener(eventName, markUserInput, { passive: true }));
@@ -2405,6 +2489,9 @@ document.addEventListener("visibilitychange", () => {
 });
 
 const initialPosition = savedPosition || fallbackPosition;
+if (storedRadius && [...elements.radius.options].some((option) => option.value === storedRadius)) {
+  elements.radius.value = storedRadius;
+}
 elements.lat.value = initialPosition.lat.toFixed(5);
 elements.lon.value = initialPosition.lon.toFixed(5);
 state.userPosition = { lat: initialPosition.lat, lon: initialPosition.lon, label: initialPosition.label };

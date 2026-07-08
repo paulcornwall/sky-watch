@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display16" />
+    <link rel="stylesheet" href="./styles.css?v=display19" />
   </head>
   <body class="kiosk-mode">
     <main class="app-shell">
@@ -40,14 +40,28 @@
           </div>
         </div>
         <div class="header-info">
-          <div class="datetime-panel" aria-label="Local date and time">
-            <span id="localDay">Sunday</span>
-            <strong id="localTime">--:--</strong>
-            <span id="localDate">5 July 2026</span>
-          </div>
-          <div class="temperature-panel" aria-label="Current temperature">
-            <strong id="currentTemperature">--°C</strong>
-            <span>Current temp</span>
+          <div class="datetime-panel" aria-label="Local date, time and weather">
+            <strong id="localTime">Loading</strong>
+            <span id="localDay">Starting</span>
+            <span id="localDate">Checking device date</span>
+            <div class="weather-readout" aria-label="Current weather">
+              <div>
+                <span>Current temp</span>
+                <b id="currentTemperature">Waiting</b>
+              </div>
+              <div>
+                <span>Weather</span>
+                <b id="weatherCondition">Waiting for weather</b>
+              </div>
+              <div>
+                <span>Rain</span>
+                <b id="weatherRainSummary">Checking next 3h</b>
+              </div>
+              <div>
+                <span>Weather updated</span>
+                <b id="weatherUpdatedTime">Waiting</b>
+              </div>
+            </div>
           </div>
         </div>
         <div class="kiosk-actions">
@@ -199,9 +213,9 @@
             </div>
           </div>
           <div class="route-line">
-            <span id="spotlightFrom">From unknown</span>
+            <span id="spotlightFrom">Route waiting</span>
             <span aria-hidden="true">→</span>
-            <span id="spotlightTo">To unknown</span>
+            <span id="spotlightTo">Aircraft waiting</span>
           </div>
           <div class="spotlight-metrics">
             <div>
@@ -276,7 +290,7 @@
             <input id="filterInput" type="search" placeholder="Filter flight, airline or route" />
           </div>
           <div id="message" class="message">
-            Use Locate or enter coordinates, then refresh.
+            Waiting for Sky Watch base station.
           </div>
           <div class="table-wrap">
             <table>
@@ -322,6 +336,6 @@
     </section>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display16" defer></script>
+    <script src="./app.js?v=display19" defer></script>
   </body>
 </html>
