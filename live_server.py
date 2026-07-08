@@ -7,6 +7,7 @@ from urllib.error import HTTPError, URLError
 from html import unescape
 import json
 import os
+import re
 import time
 import xml.etree.ElementTree as ET
 
@@ -46,6 +47,70 @@ def fetch_json(url):
     )
     with urlopen(request, timeout=TIMEOUT) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def fetch_text(url):
+    request = Request(
+        url,
+        headers={
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "User-Agent": "SkyWatchWallDisplay/1.0",
+        },
+    )
+    with urlopen(request, timeout=TIMEOUT) as response:
+        return response.read().decode("utf-8", errors="replace")
+
+
+def clean_text(value):
+    return re.sub(r"\s+", " ", unescape(value or "")).strip()
+
+
+def parse_airnav_time(value):
+    match = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", value or "")
+    return f"{match.group(1).zfill(2)}:{match.group(2)}" if match else ""
+
+
+def parse_airnav_route(html):
+    if "Just a moment" in html and "challenges.cloudflare.com" in html:
+        return None
+    text = clean_text(re.sub(r"<[^>]+>", " ", html))
+    airport_pattern = r"([A-Z]{3,4})\s*[-–]\s*([^|•]+?)"
+    airports = re.findall(airport_pattern, text)
+    origin = airports[0] if len(airports) >= 1 else None
+    destination = airports[1] if len(airports) >= 2 else None
+
+    labels = {
+        "scheduledDeparture": r"(?:Scheduled departure|Departure|STD)\D{0,30}([0-2]?\d:[0-5]\d)",
+        "estimatedDeparture": r"(?:Estimated departure|Actual departure|Departed)\D{0,30}([0-2]?\d:[0-5]\d)",
+        "scheduledArrival": r"(?:Scheduled arrival|Arrival|STA)\D{0,30}([0-2]?\d:[0-5]\d)",
+        "estimatedArrival": r"(?:Estimated arrival|ETA|Arriving)\D{0,30}([0-2]?\d:[0-5]\d)",
+    }
+    times = {}
+    for key, pattern in labels.items():
+        match = re.search(pattern, text, flags=re.I)
+        if match:
+            times[key] = parse_airnav_time(match.group(1))
+
+    route = {
+        "origin": {"iata": origin[0], "name": clean_text(origin[1])} if origin else None,
+        "destination": {"iata": destination[0], "name": clean_text(destination[1])} if destination else None,
+        **times,
+    }
+    if not any(route.values()):
+        return None
+    return route
+
+
+def fetch_airnav_route(callsign):
+    urls = [
+        f"https://www.airnavradar.com/data/flights/{callsign}",
+        f"https://www.airnavradar.com/data/flights/{callsign}/",
+    ]
+    for url in urls:
+        route = parse_airnav_route(fetch_text(url))
+        if route:
+            return route
+    return None
 
 
 def cached(key, ttl, loader):
@@ -137,8 +202,16 @@ class LiveFeedHandler(SimpleHTTPRequestHandler):
             json_response(self, {"error": "callsign is required"}, 400)
             return
 
+        try:
+            route = cached(f"route:airnav:{callsign}", CACHE_SECONDS["route"], lambda: fetch_airnav_route(callsign))
+            if route:
+                json_response(self, {"source": "airnavradar.com", "data": {"route": route}})
+                return
+        except (HTTPError, URLError, TimeoutError, UnicodeDecodeError) as error:
+            print(f"AirNavRadar route lookup failed for {callsign}: {error}")
+
         endpoint = f"https://api.adsbdb.com/v0/callsign/{callsign}"
-        data = cached(f"route:{callsign}", CACHE_SECONDS["route"], lambda: fetch_json(endpoint))
+        data = cached(f"route:adsbdb:{callsign}", CACHE_SECONDS["route"], lambda: fetch_json(endpoint))
         json_response(self, {"source": "adsbdb.com", "data": data})
 
     def handle_postcode(self, params):

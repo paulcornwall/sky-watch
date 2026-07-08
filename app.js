@@ -1031,13 +1031,22 @@ function routeLabel(name, code = "") {
   return routeName || routeCode || "";
 }
 
-function routeCellMarkup(name, code = "") {
+function routeTimeLabel(scheduled, estimated, fallbackLabel) {
+  const estimatedTime = formatTime(estimated);
+  const scheduledTime = formatTime(scheduled);
+  if (estimatedTime) return `Est ${estimatedTime}`;
+  if (scheduledTime) return `${fallbackLabel} ${scheduledTime}`;
+  return "";
+}
+
+function routeCellMarkup(name, code = "", time = "") {
   const routeName = String(name || "").trim();
   const routeCode = String(code || "").trim().toUpperCase();
   return `
     <span class="route-airport">
       <span>${escapeHtml(routeName || "Route lookup pending")}</span>
       ${routeCode ? `<small>${escapeHtml(routeCode)}</small>` : ""}
+      ${time ? `<small class="route-time">${escapeHtml(time)}</small>` : ""}
     </span>
   `;
 }
@@ -1226,6 +1235,10 @@ function normalizeAircraft(item, origin) {
     fromCode: item.fromCode || item.originCode || routeAirportCode(originRoute),
     to: routeAirportName(destinationRoute) || "Route lookup pending",
     toCode: item.toCode || item.destinationCode || routeAirportCode(destinationRoute),
+    scheduledDeparture: item.scheduledDeparture || item.departureTime || item.std,
+    estimatedDeparture: item.estimatedDeparture || item.actualDeparture || item.etd,
+    scheduledArrival: item.scheduledArrival || item.arrivalTime || item.sta,
+    estimatedArrival: item.estimatedArrival || item.eta || item.actualArrival,
     distance,
     bearing: Number.isFinite(lat) && Number.isFinite(lon) ? bearingBetween(origin.lat, origin.lon, lat, lon) : 0,
     heading: Number(item.track ?? item.nav_heading ?? item.heading ?? 0),
@@ -1332,6 +1345,7 @@ function extractRouteDetails(payload) {
     (Array.isArray(payload?.data?.data) ? payload.data.data[0] : null) ||
     (Array.isArray(payload?.data) ? payload.data[0] : null) ||
     payload?.data?.response?.flightroute ||
+    payload?.data?.route ||
     payload?.response?.flightroute ||
     payload?.flightroute ||
     payload?.route;
@@ -1347,8 +1361,12 @@ function extractRouteDetails(payload) {
     compactRouteName(route.operator) ||
     compactRouteName(route.airline?.name) ||
     compactRouteName(payload?.data?.response?.aircraft?.operator);
-  if (!from && !to && !fromCode && !toCode && !airline) return null;
-  return { from, fromCode, to, toCode, airline };
+  const scheduledDeparture = route.scheduledDeparture || route.scheduled_departure || route.departureTime || route.departure_time || route.std;
+  const estimatedDeparture = route.estimatedDeparture || route.estimated_departure || route.actualDeparture || route.actual_departure || route.etd;
+  const scheduledArrival = route.scheduledArrival || route.scheduled_arrival || route.arrivalTime || route.arrival_time || route.sta;
+  const estimatedArrival = route.estimatedArrival || route.estimated_arrival || route.actualArrival || route.actual_arrival || route.eta;
+  if (!from && !to && !fromCode && !toCode && !airline && !scheduledDeparture && !scheduledArrival && !estimatedArrival) return null;
+  return { from, fromCode, to, toCode, airline, scheduledDeparture, estimatedDeparture, scheduledArrival, estimatedArrival };
 }
 
 function routeNeedsLookup(aircraft) {
@@ -1397,6 +1415,10 @@ async function enrichAircraftRoutes(aircraftList) {
     if (details.fromCode) aircraft.fromCode = details.fromCode;
     if (details.to) aircraft.to = details.to;
     if (details.toCode) aircraft.toCode = details.toCode;
+    if (details.scheduledDeparture) aircraft.scheduledDeparture = details.scheduledDeparture;
+    if (details.estimatedDeparture) aircraft.estimatedDeparture = details.estimatedDeparture;
+    if (details.scheduledArrival) aircraft.scheduledArrival = details.scheduledArrival;
+    if (details.estimatedArrival) aircraft.estimatedArrival = details.estimatedArrival;
   }
   return aircraftList;
 }
@@ -1501,8 +1523,8 @@ function aircraftPopupHtml(aircraft) {
         <div><dt>Speed</dt><dd>${escapeHtml(formatSpeed(aircraft.speed))}</dd></div>
         <div><dt>Range</dt><dd>${escapeHtml(formatDistance(aircraft.distance))}</dd></div>
         <div><dt>Bearing</dt><dd>${escapeHtml(formatDirection(aircraft.bearing))}</dd></div>
-        <div><dt>From</dt><dd>${routeCellMarkup(aircraft.from, aircraft.fromCode)}</dd></div>
-        <div><dt>To</dt><dd>${routeCellMarkup(aircraft.to, aircraft.toCode)}</dd></div>
+        <div><dt>From</dt><dd>${routeCellMarkup(aircraft.from, aircraft.fromCode, routeTimeLabel(aircraft.scheduledDeparture, aircraft.estimatedDeparture, "Dep"))}</dd></div>
+        <div><dt>To</dt><dd>${routeCellMarkup(aircraft.to, aircraft.toCode, routeTimeLabel(aircraft.scheduledArrival, aircraft.estimatedArrival, "Arr"))}</dd></div>
         <div><dt>Seen</dt><dd>${escapeHtml(formatAge(aircraft.seenAt || state.lastUpdatedAt))}</dd></div>
       </dl>
     </div>
@@ -1700,8 +1722,8 @@ function renderTable() {
       <td>${aircraft.aircraftType || "Type unknown"}</td>
       <td>${formatAltitude(aircraft.altitude)}</td>
       <td>${formatSpeed(aircraft.speed)}</td>
-      <td class="${routeNeedsLookup(aircraft) ? "unknown" : ""}">${routeCellMarkup(aircraft.from, aircraft.fromCode)}</td>
-      <td class="${routeNeedsLookup(aircraft) ? "unknown" : ""}">${routeCellMarkup(aircraft.to, aircraft.toCode)}</td>
+      <td class="${routeNeedsLookup(aircraft) ? "unknown" : ""}">${routeCellMarkup(aircraft.from, aircraft.fromCode, routeTimeLabel(aircraft.scheduledDeparture, aircraft.estimatedDeparture, "Dep"))}</td>
+      <td class="${routeNeedsLookup(aircraft) ? "unknown" : ""}">${routeCellMarkup(aircraft.to, aircraft.toCode, routeTimeLabel(aircraft.scheduledArrival, aircraft.estimatedArrival, "Arr"))}</td>
       <td>${formatDistance(aircraft.distance)}</td>
       <td>${formatAge(aircraft.seenAt || state.lastUpdatedAt)}</td>
     `;
@@ -1769,8 +1791,8 @@ function renderSpotlight() {
     ? aircraft.airAmbulanceStatus || `${aircraft.specialReason} · ${aircraft.status}`
     : aircraft.status;
   elements.spotlightStatus.className = `spotlight-status${aircraft.specialReason ? " special" : ""}`;
-  elements.spotlightFrom.innerHTML = routeCellMarkup(aircraft.from, aircraft.fromCode);
-  elements.spotlightTo.innerHTML = routeCellMarkup(aircraft.to, aircraft.toCode);
+  elements.spotlightFrom.innerHTML = routeCellMarkup(aircraft.from, aircraft.fromCode, routeTimeLabel(aircraft.scheduledDeparture, aircraft.estimatedDeparture, "Dep"));
+  elements.spotlightTo.innerHTML = routeCellMarkup(aircraft.to, aircraft.toCode, routeTimeLabel(aircraft.scheduledArrival, aircraft.estimatedArrival, "Arr"));
   elements.spotlightDistance.textContent = formatDistance(aircraft.distance);
   elements.spotlightDirection.textContent = formatDirection(aircraft.bearing);
   elements.spotlightAltitude.textContent = formatAltitude(aircraft.altitude);

@@ -861,6 +861,12 @@ button:hover {
   letter-spacing: 0.16em;
 }
 
+.route-airport > .route-time {
+  color: var(--amber);
+  font-size: 0.48em;
+  letter-spacing: 0.08em;
+}
+
 .spotlight-metrics {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
