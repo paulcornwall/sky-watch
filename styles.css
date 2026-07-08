@@ -3305,19 +3305,12 @@ body.display-mode .settings-button {
 }
 
 body.display-mode:not(.kiosk-mode) .settings-button {
-  position: fixed;
-  z-index: 100;
-  top: max(10px, env(safe-area-inset-top));
-  right: max(10px, env(safe-area-inset-right));
-  border-color: var(--amber);
-  color: var(--amber);
-  background: rgba(20, 17, 3, 0.96);
-  box-shadow: 0 0 18px rgba(255, 209, 92, 0.16);
+  display: none;
 }
 
 body.display-mode:not(.kiosk-mode) .controls {
-  top: calc(max(10px, env(safe-area-inset-top)) + 54px);
-  max-height: calc(100vh - 74px);
+  top: max(10px, env(safe-area-inset-top));
+  max-height: calc(100vh - 20px);
 }
 
 body.display-mode .airline-logo.spotlight-logo {

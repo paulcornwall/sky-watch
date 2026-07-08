@@ -220,6 +220,9 @@ let state = {
   lastEmergencyFocusAt: 0,
   lastAirAmbulance: null,
   testAlertUntil: 0,
+  testAlertAircraft: null,
+  testAircraftId: "SKY-WATCH-TEST-AIR-AMBULANCE",
+  testAlertClearTimer: null,
   militaryLog: loadMilitaryLog(),
   rescueLog: loadRescueLog(),
   routeCache: new Map(),
@@ -1442,6 +1445,28 @@ function bearingBetween(fromLat, fromLon, toLat, toLon) {
   return (toDeg(Math.atan2(y, x)) + 360) % 360;
 }
 
+function pointFromDistanceBearing(lat, lon, distanceMiles, bearingDegrees) {
+  const radius = 3958.8;
+  const angularDistance = distanceMiles / radius;
+  const bearing = (bearingDegrees * Math.PI) / 180;
+  const lat1 = (lat * Math.PI) / 180;
+  const lon1 = (lon * Math.PI) / 180;
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(angularDistance) +
+      Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing),
+  );
+  const lon2 =
+    lon1 +
+    Math.atan2(
+      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat1),
+      Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2),
+    );
+  return {
+    lat: (lat2 * 180) / Math.PI,
+    lon: ((((lon2 * 180) / Math.PI) + 540) % 360) - 180,
+  };
+}
+
 function normalizeAircraft(item, origin) {
   const flight = [item.flight, item.callsign, item.r, item.registration, item.hex]
     .map((value) => String(value || "").trim())
@@ -1800,7 +1825,7 @@ function setRadarExpanded(expanded, userInitiated = false) {
   state.radarExpanded = Boolean(expanded);
   if (userInitiated) state.lastInputAt = Date.now();
   document.body.classList.toggle("radar-expanded", state.radarExpanded);
-  const rescue = activeCloseRescueAircraft() || activeRescueAircraft();
+  const rescue = activeCloseRescueAircraft() || activeTestAlertAircraft() || activeRescueAircraft();
   elements.expandRadar.textContent = state.radarExpanded ? "Close radar" : "Expand radar";
   elements.mapLabel.textContent = state.radarExpanded
     ? rescue
@@ -1846,10 +1871,10 @@ function collapseExpandedMapIfIdle() {
 function updateMap() {
   initMap();
   const radius = Number(elements.radius.value);
-  const tracked = priorityAircraft();
+  const tracked = activeTestAlertAircraft() || priorityAircraft();
   const mapRadius = state.radarExpanded
     ? tracked?.specialReason
-      ? Math.max(5, Math.ceil(Number(tracked.distance) + 1))
+      ? Math.max(3, Math.ceil(Number(tracked.distance) + 0.75))
       : Math.min(radius, 25)
     : radius;
   elements.mapRangeLabel.textContent = state.radarExpanded && tracked?.specialReason
@@ -1863,8 +1888,8 @@ function updateMap() {
 
   const position = [state.userPosition.lat, state.userPosition.lon];
   if (state.radarExpanded && tracked?.specialReason && Number.isFinite(tracked.lat) && Number.isFinite(tracked.lon)) {
-    const bounds = L.latLngBounds([position, [tracked.lat, tracked.lon]]).pad(state.radarExpanded ? 0.18 : 0.34);
-    state.map.fitBounds(bounds, { animate: true, maxZoom: state.radarExpanded ? 14 : 10, padding: [42, 42] });
+    const bounds = L.latLngBounds([position, [tracked.lat, tracked.lon]]).pad(state.radarExpanded ? 0.12 : 0.34);
+    state.map.fitBounds(bounds, { animate: true, maxZoom: state.radarExpanded ? 16 : 10, padding: [34, 34] });
     elements.mapLabel.textContent = state.radarExpanded ? `${tracked.specialReason} close focus` : `Tracking ${tracked.specialReason}`;
   } else {
     const radiusBounds = L.circle(position, { radius: milesToMeters(mapRadius) }).getBounds();
@@ -1945,6 +1970,7 @@ function applyFilter() {
   const term = elements.filter.value.trim().toLowerCase();
   state.filtered = state.aircraft
     .filter((aircraft) => {
+      if (aircraft.id === state.testAircraftId) return true;
       if (!aircraftCategoryMatches(aircraft)) return false;
       if (!term) return true;
       return [
@@ -2178,6 +2204,11 @@ function activeRescueAircraft() {
     .sort((a, b) => a.distance - b.distance)[0] || null;
 }
 
+function activeTestAlertAircraft() {
+  if (Date.now() >= state.testAlertUntil) return null;
+  return state.testAlertAircraft || null;
+}
+
 function activeCloseRescueAircraft() {
   return state.aircraft
     .filter((aircraft) => isRescueAircraft(aircraft) && Number.isFinite(aircraft.distance) && aircraft.distance <= 5)
@@ -2245,14 +2276,15 @@ function playUrgentChime() {
 }
 
 function renderAirAmbulanceAlert() {
-  const aircraft = activeCloseRescueAircraft();
+  const testAircraft = activeTestAlertAircraft();
+  const aircraft = activeCloseRescueAircraft() || testAircraft;
   const inRange = Boolean(aircraft);
-  const testActive = Date.now() < state.testAlertUntil;
+  const testActive = Boolean(testAircraft);
   elements.airAmbulanceAlert.hidden = !(inRange || testActive);
   elements.airAmbulanceAlert.classList.toggle("active", Boolean(inRange || testActive));
-  if (testActive && !inRange) {
-    elements.airAmbulanceAlertTitle.textContent = "Test alert";
-    elements.airAmbulanceAlertText.textContent = "Emergency aircraft alert display and chime test";
+  if (testActive && aircraft?.id === state.testAircraftId) {
+    elements.airAmbulanceAlertTitle.textContent = "TEST AIR AMBULANCE CLOSE";
+    elements.airAmbulanceAlertText.textContent = emergencyAlertDetails(aircraft);
     return;
   }
   if (!inRange) return;
@@ -2292,10 +2324,82 @@ function quietHoursActive() {
   return state.nightMode;
 }
 
+function removeTestAlertAircraft() {
+  state.testAlertAircraft = null;
+  state.aircraft = state.aircraft.filter((aircraft) => aircraft.id !== state.testAircraftId);
+  state.filtered = state.filtered.filter((aircraft) => aircraft.id !== state.testAircraftId);
+  state.trackHistory.delete(state.testAircraftId);
+  if (state.selectedAircraftKey === state.testAircraftId) state.selectedAircraftKey = "";
+  if (Date.now() >= state.testAlertUntil) {
+    elements.airAmbulanceAlert.hidden = true;
+    elements.airAmbulanceAlert.classList.remove("active");
+  }
+  applyFilter();
+}
+
+function createTestAirAmbulanceTrack() {
+  if (!state.userPosition) return null;
+  const distance = 2.2;
+  const point = pointFromDistanceBearing(state.userPosition.lat, state.userPosition.lon, distance, 38);
+  const heading = bearingBetween(point.lat, point.lon, state.userPosition.lat, state.userPosition.lon);
+  const aircraft = decorateAircraft({
+    flight: "G-CRWL TEST",
+    airline: "Cornwall Air Ambulance",
+    aircraftType: "AW169 Helicopter",
+    altitude: 1200,
+    from: "Cornwall Air Ambulance Newquay",
+    fromCode: "NQY",
+    to: "Emergency test near your location",
+    toCode: "HOME",
+    distance: distanceFromCoords(state.userPosition, point),
+    bearing: bearingBetween(state.userPosition.lat, state.userPosition.lon, point.lat, point.lon),
+    heading,
+    speed: 145,
+    lat: point.lat,
+    lon: point.lon,
+    id: state.testAircraftId,
+    registration: "G-CRWL",
+    seenAt: Date.now(),
+  });
+  return {
+    ...aircraft,
+    airAmbulanceStatus: `Test alert within 5 miles - ${placePhrase(aircraft)}`,
+    status: "Simulated emergency test",
+  };
+}
+
+function showTestEmergencyFocus(aircraft) {
+  if (!aircraft) return;
+  elements.airAmbulanceAlert.hidden = false;
+  elements.airAmbulanceAlert.classList.add("active");
+  elements.airAmbulanceAlertTitle.textContent = "TEST AIR AMBULANCE CLOSE";
+  elements.airAmbulanceAlertText.textContent = emergencyAlertDetails(aircraft);
+  elements.mapLabel.textContent = `${aircraft.specialReason || "Emergency aircraft"} close focus`;
+  elements.mapRangeLabel.textContent = `${aircraft.flight} focus · ${formatDistance(aircraft.distance)}`;
+  elements.expandRadar.textContent = "Close radar";
+  renderRadarSelection(aircraft);
+}
+
 function testAirAmbulanceAlert() {
-  state.testAlertUntil = Date.now() + 12000;
+  state.testAlertUntil = Date.now() + 45000;
+  const testAircraft = createTestAirAmbulanceTrack();
+  if (testAircraft) {
+    state.testAlertAircraft = testAircraft;
+    state.aircraft = [testAircraft, ...state.aircraft.filter((aircraft) => aircraft.id !== state.testAircraftId)];
+    rememberTracks([testAircraft]);
+    closeSettingsPanel();
+    applyFilter();
+    selectAircraft(testAircraft);
+    state.lastEmergencyFocusAt = Date.now();
+    setRadarExpanded(true, true);
+    window.clearTimeout(state.testAlertClearTimer);
+    state.testAlertClearTimer = window.setTimeout(removeTestAlertAircraft, 45000);
+  }
   playUrgentChime();
   renderAirAmbulanceAlert();
+  showTestEmergencyFocus(testAircraft);
+  window.setTimeout(() => showTestEmergencyFocus(testAircraft), 120);
+  window.setTimeout(() => showTestEmergencyFocus(testAircraft), 1200);
 }
 
 function toggleKiosk() {
@@ -2575,7 +2679,11 @@ function drawRadar() {
   const cx = width / 2;
   const cy = height / 2;
   const radarRadius = Math.min(width, height) * 0.43;
-  const range = Number(elements.radius.value);
+  const tracked = activeTestAlertAircraft() || priorityAircraft();
+  const range =
+    state.radarExpanded && tracked?.specialReason && Number.isFinite(tracked.distance)
+      ? Math.max(3, Math.ceil(Number(tracked.distance) + 0.75))
+      : Number(elements.radius.value);
 
   ctx.clearRect(0, 0, width, height);
   if (!state.mapReady) drawMapUnderlay(ctx, width, height, cx, cy, radarRadius);
@@ -2611,7 +2719,6 @@ function drawRadar() {
   ctx.arc(cx, cy, 5, 0, Math.PI * 2);
   ctx.fill();
 
-  const tracked = priorityAircraft();
   const trackedPositions = new Map();
   state.radarHitTargets = [];
   for (const aircraft of state.filtered) {
@@ -2698,6 +2805,10 @@ async function refreshAircraft() {
     } catch (routeError) {
       console.warn(routeError);
       state.aircraft = nearbyAircraft;
+    }
+    const testAircraft = activeTestAlertAircraft();
+    if (testAircraft && !state.aircraft.some((aircraft) => aircraft.id === state.testAircraftId)) {
+      state.aircraft = [testAircraft, ...state.aircraft];
     }
     const ambulance = activeAirAmbulance();
     if (ambulance) {

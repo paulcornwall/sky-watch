@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display36" />
+    <link rel="stylesheet" href="./styles.css?v=display40" />
   </head>
   <body class="kiosk-mode setup-active">
     <main class="app-shell">
@@ -122,30 +122,31 @@
             <span aria-hidden="true">◐</span>
             Night
           </button>
-          <label>
-            Dim
+          <label title="Screen brightness used when Night dim mode is active. 10% is darkest, 75% is brighter.">
+            Night dim level
             <select id="nightDimSelect">
               <option value="0.1">10%</option>
               <option value="0.2" selected>20%</option>
               <option value="0.3">30%</option>
               <option value="0.4">40%</option>
               <option value="0.5">50%</option>
+              <option value="0.75">75%</option>
             </select>
           </label>
-          <label class="control-check">
+          <label class="control-check" title="Automatically turns Night dim mode on between the times below.">
             <input id="nightScheduleToggle" type="checkbox" />
-            Schedule night
+            Schedule screen dimming
           </label>
-          <label class="control-check">
+          <label class="control-check" title="If off, alert sounds are muted while Night dim mode is active. Visual emergency alerts still appear.">
             <input id="emergencyNightChimeToggle" type="checkbox" />
-            Night emergency chime
+            Allow emergency chime while dimmed
           </label>
-          <label>
-            Night from
+          <label title="Time when scheduled screen dimming starts.">
+            Dim from
             <input id="nightStartInput" type="time" value="22:00" />
           </label>
-          <label>
-            Night until
+          <label title="Time when scheduled screen dimming ends.">
+            Dim until
             <input id="nightEndInput" type="time" value="07:00" />
           </label>
           <button id="changeLocationButton" type="button" title="Change saved base location">
@@ -160,9 +161,9 @@
             <input id="autoCollapseToggle" type="checkbox" checked />
             Auto close map
           </label>
-          <button id="testAlertButton" class="test-alert-button" type="button" title="Test emergency alert">
+          <button id="testAlertButton" class="test-alert-button" type="button" title="Simulate an emergency aircraft within 5 miles and zoom the radar map.">
             <span aria-hidden="true">!</span>
-            Test alert
+            Test 5 mi alert
           </button>
           <p class="wake-hint">iPad: open the website in Safari, tap Share, Add to Home Screen, then use Display Mode. For all-day use, set Auto-Lock to Never where available or use Guided Access.</p>
         </div>
@@ -395,6 +396,6 @@
     </section>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display36" defer></script>
+    <script src="./app.js?v=display40" defer></script>
   </body>
 </html>
