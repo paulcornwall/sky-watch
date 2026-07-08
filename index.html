@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display24" />
+    <link rel="stylesheet" href="./styles.css?v=display26" />
   </head>
   <body class="kiosk-mode setup-active">
     <main class="app-shell">
@@ -35,15 +35,16 @@
           <div class="ticker-label">Signal feed</div>
           <div class="ticker-window">
             <div class="ticker-track" id="tickerTrack">
-              <span>Checking rain, aircraft and market alerts</span>
+              <span>Monitoring aircraft, air ambulance, coastguard, weather and news</span>
             </div>
           </div>
         </div>
         <div class="header-info">
           <div class="datetime-panel" aria-label="Local date, time and weather">
-            <strong id="localTime">Loading</strong>
+            <span class="today-label">Today is</span>
             <span id="localDay">Starting</span>
             <span id="localDate">Checking device date</span>
+            <strong id="localTime">Loading</strong>
             <div class="weather-readout" aria-label="Current weather">
               <div>
                 <span>Current temp</span>
@@ -72,10 +73,6 @@
           <button id="chimeButton" class="alert-toggle" type="button" title="Toggle special aircraft chime">
             <span aria-hidden="true">♪</span>
             Chime off
-          </button>
-          <button id="testAlertButton" class="test-alert-button" type="button" title="Test air ambulance alert">
-            <span aria-hidden="true">!</span>
-            Test
           </button>
           <button id="kioskButton" type="button" title="Show or hide controls">
             <span aria-hidden="true">☰</span>
@@ -126,6 +123,10 @@
             <input id="nightScheduleToggle" type="checkbox" />
             Schedule night
           </label>
+          <label class="control-check">
+            <input id="emergencyNightChimeToggle" type="checkbox" />
+            Night emergency chime
+          </label>
           <label>
             Night from
             <input id="nightStartInput" type="time" value="22:00" />
@@ -140,12 +141,17 @@
           </button>
           <label class="control-check">
             <input id="airAmbulanceZoomToggle" type="checkbox" checked />
-            AA map zoom
+            Emergency map zoom
           </label>
           <label class="control-check">
             <input id="autoCollapseToggle" type="checkbox" checked />
             Auto close map
           </label>
+          <button id="testAlertButton" class="test-alert-button" type="button" title="Test emergency alert">
+            <span aria-hidden="true">!</span>
+            Test alert
+          </button>
+          <p class="wake-hint">For permanent wall display, set iPad Auto-Lock to Never if available, or use Guided Access Display Auto-Lock.</p>
         </div>
       </section>
 
@@ -169,7 +175,7 @@
         </div>
         <div>
           <span class="metric" id="airAmbulanceWatch">Standby</span>
-          <span id="airAmbulanceWatchText">air ambulance watch</span>
+          <span id="airAmbulanceWatchText">rescue watch</span>
         </div>
         <div>
           <span class="metric" id="militaryLogCount">0</span>
@@ -346,6 +352,6 @@
     </section>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display24" defer></script>
+    <script src="./app.js?v=display26" defer></script>
   </body>
 </html>

@@ -9,6 +9,7 @@ const elements = {
   nightMode: document.querySelector("#nightModeButton"),
   nightDim: document.querySelector("#nightDimSelect"),
   nightSchedule: document.querySelector("#nightScheduleToggle"),
+  emergencyNightChime: document.querySelector("#emergencyNightChimeToggle"),
   nightStart: document.querySelector("#nightStartInput"),
   nightEnd: document.querySelector("#nightEndInput"),
   chime: document.querySelector("#chimeButton"),
@@ -151,6 +152,7 @@ const storedDisplayMode =
 const storedNightMode = window.localStorage.getItem("skyWatchNightMode") === "true";
 const storedNightDim = window.localStorage.getItem("skyWatchNightDim") || "0.2";
 const storedNightSchedule = window.localStorage.getItem("skyWatchNightSchedule") === "true";
+const storedEmergencyNightChime = window.localStorage.getItem("skyWatchEmergencyNightChime") === "true";
 const storedNightStart = window.localStorage.getItem("skyWatchNightStart") || "22:00";
 const storedNightEnd = window.localStorage.getItem("skyWatchNightEnd") || "07:00";
 const storedAirAmbulanceZoom = window.localStorage.getItem("skyWatchAirAmbulanceZoom") !== "false";
@@ -203,6 +205,8 @@ let state = {
   trackHistory: new Map(),
   selectedAircraftKey: "",
   airAmbulanceAlerted: new Set(),
+  emergencyCloseAlerted: new Set(),
+  lastEmergencyFocusAt: 0,
   lastAirAmbulance: null,
   testAlertUntil: 0,
   militaryLog: loadMilitaryLog(),
@@ -217,6 +221,7 @@ let state = {
   nightMode: storedNightMode,
   nightDim: Number(storedNightDim),
   nightScheduleEnabled: storedNightSchedule,
+  emergencyNightChimeEnabled: storedEmergencyNightChime,
   nightStart: storedNightStart,
   nightEnd: storedNightEnd,
   weather: [],
@@ -725,6 +730,23 @@ function bitcoinTrendLabel() {
 
 function renderTicker() {
   const items = [];
+  const closeRescue = activeCloseRescueAircraft();
+  if (closeRescue) {
+    items.push(`${emergencyAlertTitle(closeRescue)} · ${emergencyAlertDetails(closeRescue)}`);
+  }
+  const rescue = activeRescueAircraft();
+  if (!closeRescue && rescue) {
+    items.push(`${rescue.specialReason}: ${rescue.flight} ${formatDistance(rescue.distance)} away · ${rescue.airAmbulanceStatus || placePhrase(rescue)}`);
+  } else if (state.lastAirAmbulance && Date.now() - state.lastAirAmbulance.seenAt < 15 * 60 * 1000) {
+    items.push(`Air ambulance last seen ${formatHour(state.lastAirAmbulance.seenAt)} · ${placePhrase(state.lastAirAmbulance.aircraft)}`);
+  }
+  if (state.militaryLog[0]) {
+    const latest = state.militaryLog[0];
+    items.push(`Military log: ${latest.flight} within ${formatDistance(Number(latest.distance))} seen ${formatHour(latest.time)}`);
+  }
+  if (state.filtered[0]) {
+    items.push(`Nearest track ${state.filtered[0].flight} ${formatDistance(state.filtered[0].distance)} away`);
+  }
   const { firstRain, strongestRain } = rainWindow();
   if (Number.isFinite(state.currentTemperature)) {
     items.push(`Local temp ${Math.round(state.currentTemperature)}°C`);
@@ -742,24 +764,8 @@ function renderTicker() {
     items.push("Weather feed unavailable - rain watch paused");
   }
 
-  if (state.filtered[0]) {
-    items.push(`Nearest track ${state.filtered[0].flight} ${formatDistance(state.filtered[0].distance)} away`);
-  }
-
   if (state.locationMode === "fallback location") {
     items.push("Base location not set - using London demo preview");
-  }
-
-  const special = state.filtered.find((aircraft) => aircraft.specialReason);
-  if (special) {
-    items.push(special.airAmbulanceStatus || `${special.specialReason} nearby: ${special.flight} ${formatDistance(special.distance)} away`);
-  } else if (state.lastAirAmbulance && Date.now() - state.lastAirAmbulance.seenAt < 15 * 60 * 1000) {
-    items.push(`Air ambulance last seen ${placePhrase(state.lastAirAmbulance.aircraft)}`);
-  }
-
-  if (state.militaryLog[0]) {
-    const latest = state.militaryLog[0];
-    items.push(`Military log: ${latest.flight} within ${formatDistance(Number(latest.distance))} seen ${formatHour(latest.time)}`);
   }
 
   for (const item of state.news.slice(0, 3)) {
@@ -1024,12 +1030,11 @@ async function fetchNews() {
 
 function updateDateTime() {
   const now = new Date();
-  elements.localDay.textContent = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(now);
-  elements.localDate.textContent = new Intl.DateTimeFormat(undefined, {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  }).format(now);
+  elements.localDay.textContent = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(now).toUpperCase();
+  const dateNumber = new Intl.DateTimeFormat(undefined, { day: "numeric" }).format(now);
+  const month = new Intl.DateTimeFormat(undefined, { month: "long" }).format(now).toUpperCase();
+  const year = new Intl.DateTimeFormat(undefined, { year: "numeric" }).format(now);
+  elements.localDate.innerHTML = `<span class="date-number">${escapeHtml(dateNumber)}</span> <span class="date-month">${escapeHtml(month)}</span> <span class="date-year">${escapeHtml(year)}</span>`;
   elements.localTime.textContent = formatClock(now, true);
 }
 
@@ -1294,8 +1299,11 @@ function specialAircraftReason(aircraft) {
     text.includes("coastguard") ||
     text.includes("rescue") ||
     text.includes("search and rescue") ||
+    text.includes("maritime and coastguard") ||
+    text.includes("hm coastguard") ||
     /\bSAR\b/i.test(text) ||
-    /^CG\d|^COAST|^SRG|^RESCUE/.test(flight)
+    /^CG\d|^COAST|^SRG|^SRD|^RESCUE|^BOND|^HMGC/.test(flight) ||
+    /^G-MCG[A-Z]/.test(String(aircraft.registration || "").toUpperCase())
   ) {
     return "Coastguard";
   }
@@ -1663,16 +1671,16 @@ function setRadarExpanded(expanded, userInitiated = false) {
   state.radarExpanded = Boolean(expanded);
   if (userInitiated) state.lastInputAt = Date.now();
   document.body.classList.toggle("radar-expanded", state.radarExpanded);
-  const ambulance = activeAirAmbulance();
+  const rescue = activeCloseRescueAircraft() || activeRescueAircraft();
   elements.expandRadar.textContent = state.radarExpanded ? "Close radar" : "Expand radar";
   elements.mapLabel.textContent = state.radarExpanded
-    ? ambulance
-      ? "Air ambulance close focus"
+    ? rescue
+      ? `${rescue.specialReason} close focus`
       : "Expanded sector map"
     : "Live sector map";
   elements.mapRangeLabel.textContent =
-    state.radarExpanded && ambulance
-      ? `AA focus · ${formatDistance(ambulance.distance)}`
+    state.radarExpanded && rescue
+      ? `Emergency focus · ${formatDistance(rescue.distance)}`
       : state.radarExpanded
         ? `${Math.min(Number(elements.radius.value) || 50, 25)} mi expanded`
       : elements.mapRangeLabel.textContent;
@@ -1684,14 +1692,13 @@ function setRadarExpanded(expanded, userInitiated = false) {
 }
 
 function maybeExpandAirAmbulanceMap() {
-  const aircraft = activeAirAmbulance();
+  const aircraft = activeCloseRescueAircraft();
   if (
     state.airAmbulanceZoomEnabled &&
     aircraft &&
-    Number.isFinite(aircraft.distance) &&
-    aircraft.distance <= 5 &&
     !state.radarExpanded
   ) {
+    state.lastEmergencyFocusAt = Date.now();
     state.selectedAircraftKey = aircraftKey(aircraft);
     setRadarExpanded(true);
   }
@@ -1699,10 +1706,12 @@ function maybeExpandAirAmbulanceMap() {
 
 function collapseExpandedMapIfIdle() {
   if (!state.radarExpanded || !state.autoCollapseMap) return;
-  const aircraft = activeAirAmbulance();
-  const stillClose = aircraft && Number.isFinite(aircraft.distance) && aircraft.distance <= 5;
+  const aircraft = activeCloseRescueAircraft();
+  const stillClose = Boolean(aircraft);
+  if (stillClose) state.lastEmergencyFocusAt = Date.now();
+  const noEmergencySeenFor = Date.now() - (state.lastEmergencyFocusAt || 0);
   const idleFor = Date.now() - state.lastInputAt;
-  if (!stillClose || idleFor >= 20 * 60 * 1000) setRadarExpanded(false);
+  if (!stillClose || noEmergencySeenFor >= 2 * 60 * 1000 || idleFor >= 20 * 60 * 1000) setRadarExpanded(false);
 }
 
 function updateMap() {
@@ -1878,14 +1887,14 @@ function renderStats() {
 }
 
 function renderSpotlight() {
-  const ambulance = activeAirAmbulance();
+  const rescue = activeCloseRescueAircraft() || activeRescueAircraft();
   const specialList = state.filtered.filter((aircraft) => aircraft.specialReason).sort((a, b) => a.distance - b.distance);
   const regularList = state.filtered.filter((aircraft) => !aircraft.specialReason).sort((a, b) => a.distance - b.distance);
   const spotlightList = [...specialList, ...regularList].slice(0, 3);
   const selectedAircraft = state.selectedAircraftKey
     ? state.filtered.find((item) => aircraftKey(item) === state.selectedAircraftKey)
     : null;
-  const aircraft = ambulance || selectedAircraft || spotlightList[state.spotlightIndex] || spotlightList[0];
+  const aircraft = rescue || selectedAircraft || spotlightList[state.spotlightIndex] || spotlightList[0];
   if (!aircraft) {
     elements.spotlightCard.classList.add("no-track");
     elements.spotlightLogo.textContent = "SW";
@@ -1942,11 +1951,43 @@ function activeAirAmbulance() {
     .sort((a, b) => a.distance - b.distance)[0] || null;
 }
 
+function isRescueAircraft(aircraft) {
+  return ["Air ambulance", "Coastguard"].includes(aircraft?.specialReason);
+}
+
+function activeRescueAircraft() {
+  return state.aircraft
+    .filter(isRescueAircraft)
+    .sort((a, b) => a.distance - b.distance)[0] || null;
+}
+
+function activeCloseRescueAircraft() {
+  return state.aircraft
+    .filter((aircraft) => isRescueAircraft(aircraft) && Number.isFinite(aircraft.distance) && aircraft.distance <= 5)
+    .sort((a, b) => a.distance - b.distance)[0] || null;
+}
+
+function emergencyAlertTitle(aircraft) {
+  if (aircraft?.specialReason === "Air ambulance") return "AIR AMBULANCE CLOSE";
+  if (aircraft?.specialReason === "Coastguard") return "COASTGUARD CLOSE";
+  return "RESCUE AIRCRAFT CLOSE";
+}
+
+function emergencyAlertDetails(aircraft) {
+  return [
+    aircraft.flight,
+    aircraft.registration,
+    formatDistance(aircraft.distance),
+    formatDirection(aircraft.bearing),
+    formatAltitude(aircraft.altitude),
+  ].filter(Boolean).join(" · ");
+}
+
 function renderAirAmbulanceWatch() {
-  const aircraft = activeAirAmbulance();
+  const aircraft = activeRescueAircraft();
   if (aircraft) {
     elements.airAmbulanceWatch.textContent = "Airborne";
-    elements.airAmbulanceWatchText.textContent = `${aircraft.flight} · ${aircraft.airAmbulanceStatus || placePhrase(aircraft)} · ${formatDistance(aircraft.distance)}`;
+    elements.airAmbulanceWatchText.textContent = `${aircraft.specialReason} · ${aircraft.flight} · ${aircraft.airAmbulanceStatus || placePhrase(aircraft)} · ${formatDistance(aircraft.distance)}`;
     return;
   }
 
@@ -1957,7 +1998,7 @@ function renderAirAmbulanceWatch() {
   }
 
   elements.airAmbulanceWatch.textContent = "Standby";
-  elements.airAmbulanceWatchText.textContent = "No Cornwall Air Ambulance track detected";
+  elements.airAmbulanceWatchText.textContent = "No air ambulance or Coastguard track detected";
 }
 
 function renderMilitaryLog() {
@@ -1970,7 +2011,7 @@ function renderMilitaryLog() {
 }
 
 function playUrgentChime() {
-  if (!state.chimeEnabled || !state.audioContext || quietHoursActive()) return;
+  if (!state.chimeEnabled || !state.audioContext || (quietHoursActive() && !state.emergencyNightChimeEnabled)) return;
   const now = state.audioContext.currentTime;
   for (const [index, frequency] of [988, 1319, 1760, 1319].entries()) {
     const oscillator = state.audioContext.createOscillator();
@@ -1987,24 +2028,31 @@ function playUrgentChime() {
 }
 
 function renderAirAmbulanceAlert() {
-  const aircraft = activeAirAmbulance();
-  const inRange = aircraft && Number.isFinite(aircraft.distance) && aircraft.distance <= 5;
+  const aircraft = activeCloseRescueAircraft();
+  const inRange = Boolean(aircraft);
   const testActive = Date.now() < state.testAlertUntil;
   elements.airAmbulanceAlert.hidden = !(inRange || testActive);
   elements.airAmbulanceAlert.classList.toggle("active", Boolean(inRange || testActive));
   if (testActive && !inRange) {
     elements.airAmbulanceAlertTitle.textContent = "Test alert";
-    elements.airAmbulanceAlertText.textContent = "Air ambulance alert display and chime test";
+    elements.airAmbulanceAlertText.textContent = "Emergency aircraft alert display and chime test";
     return;
   }
   if (!inRange) return;
 
-  elements.airAmbulanceAlertTitle.textContent = "Air Ambulance close";
-  elements.airAmbulanceAlertText.textContent = `${aircraft.flight} ${formatDistance(aircraft.distance)} away - ${aircraft.airAmbulanceStatus || placePhrase(aircraft)}`;
+  state.lastEmergencyFocusAt = Date.now();
+  elements.airAmbulanceAlertTitle.textContent = emergencyAlertTitle(aircraft);
+  elements.airAmbulanceAlertText.textContent = emergencyAlertDetails(aircraft);
   const key = `${aircraftKey(aircraft)}:within-5`;
-  if (!state.airAmbulanceAlerted.has(key)) {
-    state.airAmbulanceAlerted.add(key);
+  if (!state.emergencyCloseAlerted.has(key)) {
+    state.emergencyCloseAlerted.add(key);
     playUrgentChime();
+  }
+  for (const alertedKey of [...state.emergencyCloseAlerted]) {
+    const active = state.aircraft.some(
+      (item) => `${aircraftKey(item)}:within-5` === alertedKey && isRescueAircraft(item) && Number(item.distance) <= 5,
+    );
+    if (!active) state.emergencyCloseAlerted.delete(alertedKey);
   }
 }
 
@@ -2055,6 +2103,7 @@ function applyDisplayPreferences() {
   elements.nightMode.classList.toggle("armed", state.nightMode);
   elements.nightDim.value = String(state.nightDim);
   elements.nightSchedule.checked = state.nightScheduleEnabled;
+  elements.emergencyNightChime.checked = state.emergencyNightChimeEnabled;
   elements.nightStart.value = state.nightStart;
   elements.nightEnd.value = state.nightEnd;
   elements.displayMode.innerHTML = state.displayMode
@@ -2068,6 +2117,7 @@ function applyDisplayPreferences() {
   window.localStorage.setItem("skyWatchNightMode", String(state.nightMode));
   window.localStorage.setItem("skyWatchNightDim", String(state.nightDim));
   window.localStorage.setItem("skyWatchNightSchedule", String(state.nightScheduleEnabled));
+  window.localStorage.setItem("skyWatchEmergencyNightChime", String(state.emergencyNightChimeEnabled));
   window.localStorage.setItem("skyWatchNightStart", state.nightStart);
   window.localStorage.setItem("skyWatchNightEnd", state.nightEnd);
   if (state.displayMode) requestWakeLock();
@@ -2079,18 +2129,18 @@ function applyDisplayPreferences() {
 async function requestWakeLock() {
   if (!state.displayMode) return;
   if (!state.wakeLockSupported) {
-    elements.wakeStatus.textContent = "Wake lock unavailable";
+    elements.wakeStatus.textContent = "Screen stay-awake: Use iPad Auto-Lock settings";
     return;
   }
   try {
     state.wakeLock = await navigator.wakeLock.request("screen");
-    elements.wakeStatus.textContent = "Screen wake lock active";
+    elements.wakeStatus.textContent = "Screen stay-awake: Active";
     state.wakeLock.addEventListener("release", () => {
-      if (state.displayMode && document.visibilityState === "visible") elements.wakeStatus.textContent = "Wake lock released";
+      if (state.displayMode && document.visibilityState === "visible") elements.wakeStatus.textContent = "Screen stay-awake: Reconnecting";
     });
   } catch (error) {
     console.warn(error);
-    elements.wakeStatus.textContent = "Wake lock unavailable";
+    elements.wakeStatus.textContent = "Screen stay-awake: Unavailable";
   }
 }
 
@@ -2103,7 +2153,7 @@ async function releaseWakeLock() {
     }
   }
   state.wakeLock = null;
-  elements.wakeStatus.textContent = state.displayMode ? "Wake lock unavailable" : "Display Mode off";
+  elements.wakeStatus.textContent = state.displayMode ? "Screen stay-awake: Unavailable" : "Display Mode off";
 }
 
 function toggleDisplayMode() {
@@ -2121,6 +2171,7 @@ function toggleNightMode() {
 function updateNightControls() {
   state.nightDim = Number(elements.nightDim.value) || 0.2;
   state.nightScheduleEnabled = elements.nightSchedule.checked;
+  state.emergencyNightChimeEnabled = elements.emergencyNightChime.checked;
   state.nightStart = elements.nightStart.value || "22:00";
   state.nightEnd = elements.nightEnd.value || "07:00";
   applyDisplayPreferences();
@@ -2130,7 +2181,9 @@ function toggleChime() {
   state.chimeEnabled = !state.chimeEnabled;
   elements.chime.classList.toggle("armed", state.chimeEnabled);
   elements.chime.innerHTML = state.chimeEnabled
-    ? '<span aria-hidden="true">♪</span> Chime on'
+    ? quietHoursActive() && !state.emergencyNightChimeEnabled
+      ? '<span aria-hidden="true">♪</span> Quiet hours: chime muted'
+      : '<span aria-hidden="true">♪</span> Chime on'
     : '<span aria-hidden="true">♪</span> Chime off';
   if (state.chimeEnabled && !state.audioContext) {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -2385,7 +2438,10 @@ async function refreshAircraft() {
     const ambulance = activeAirAmbulance();
     if (ambulance) {
       state.lastAirAmbulance = { aircraft: ambulance, seenAt: Date.now() };
-      state.selectedAircraftKey = aircraftKey(ambulance);
+    }
+    const rescue = activeCloseRescueAircraft() || activeRescueAircraft();
+    if (rescue) {
+      state.selectedAircraftKey = aircraftKey(rescue);
       state.spotlightIndex = 0;
     }
     updateMilitaryLog();
@@ -2513,6 +2569,7 @@ elements.displayMode.addEventListener("click", toggleDisplayMode);
 elements.nightMode.addEventListener("click", toggleNightMode);
 elements.nightDim.addEventListener("change", updateNightControls);
 elements.nightSchedule.addEventListener("change", updateNightControls);
+elements.emergencyNightChime.addEventListener("change", updateNightControls);
 elements.nightStart.addEventListener("change", updateNightControls);
 elements.nightEnd.addEventListener("change", updateNightControls);
 elements.chime.addEventListener("click", toggleChime);
@@ -2583,7 +2640,7 @@ state.nightScheduleTimer = window.setInterval(() => {
   if (state.nightScheduleEnabled) applyDisplayPreferences();
 }, 60 * 1000);
 state.spotlightTimer = window.setInterval(() => {
-  if (activeAirAmbulance()) {
+  if (activeRescueAircraft()) {
     renderSpotlight();
     return;
   }
