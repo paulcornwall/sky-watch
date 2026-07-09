@@ -227,6 +227,7 @@ let state = {
   rescueLog: loadRescueLog(),
   routeCache: new Map(),
   radarExpanded: false,
+  suppressEmergencyAutoExpandUntil: 0,
   lastInputAt: Date.now(),
   airAmbulanceZoomEnabled: storedAirAmbulanceZoom,
   autoCollapseMap: storedAutoCollapse,
@@ -1823,7 +1824,10 @@ function selectRadarCanvasAircraft(event) {
 
 function setRadarExpanded(expanded, userInitiated = false) {
   state.radarExpanded = Boolean(expanded);
-  if (userInitiated) state.lastInputAt = Date.now();
+  if (userInitiated) {
+    state.lastInputAt = Date.now();
+    if (!state.radarExpanded) state.suppressEmergencyAutoExpandUntil = Date.now() + 2 * 60 * 1000;
+  }
   document.body.classList.toggle("radar-expanded", state.radarExpanded);
   const rescue = activeCloseRescueAircraft() || activeTestAlertAircraft() || activeRescueAircraft();
   elements.expandRadar.textContent = state.radarExpanded ? "Close radar" : "Expand radar";
@@ -1850,7 +1854,8 @@ function maybeExpandAirAmbulanceMap() {
   if (
     state.airAmbulanceZoomEnabled &&
     aircraft &&
-    !state.radarExpanded
+    !state.radarExpanded &&
+    Date.now() > state.suppressEmergencyAutoExpandUntil
   ) {
     state.lastEmergencyFocusAt = Date.now();
     state.selectedAircraftKey = aircraftKey(aircraft);
@@ -2130,7 +2135,7 @@ function renderStats() {
 }
 
 function renderSpotlight() {
-  const rescue = activeCloseRescueAircraft() || activeRescueAircraft();
+  const rescue = emergencyFocusAircraft() || activeRescueAircraft();
   const specialList = state.filtered.filter((aircraft) => aircraft.specialReason).sort((a, b) => a.distance - b.distance);
   const regularList = state.filtered.filter((aircraft) => !aircraft.specialReason).sort((a, b) => a.distance - b.distance);
   const spotlightList = [...specialList, ...regularList].slice(0, 3);
@@ -2159,6 +2164,7 @@ function renderSpotlight() {
   }
 
   elements.spotlightCard.classList.remove("no-track");
+  elements.spotlightCard.classList.toggle("emergency-card", Boolean(emergencyFocusAircraft() && aircraftKey(aircraft) === aircraftKey(emergencyFocusAircraft())));
   setSpotlightLogo(aircraft);
   elements.spotlightFlight.textContent = displayServiceName(aircraft);
   elements.spotlightAirline.textContent = `Callsign ${aircraft.flight}`;
@@ -2215,6 +2221,10 @@ function activeCloseRescueAircraft() {
     .sort((a, b) => a.distance - b.distance)[0] || null;
 }
 
+function emergencyFocusAircraft() {
+  return activeCloseRescueAircraft() || activeTestAlertAircraft();
+}
+
 function emergencyAlertTitle(aircraft) {
   if (aircraft?.specialReason === "Air ambulance") return "AIR AMBULANCE CLOSE";
   if (aircraft?.specialReason === "Coastguard") return "COASTGUARD CLOSE";
@@ -2232,9 +2242,9 @@ function emergencyAlertDetails(aircraft) {
 }
 
 function renderAirAmbulanceWatch() {
-  const aircraft = activeRescueAircraft();
+  const aircraft = emergencyFocusAircraft() || activeRescueAircraft();
   if (aircraft) {
-    elements.airAmbulanceWatch.textContent = "Airborne";
+    elements.airAmbulanceWatch.textContent = aircraft.id === state.testAircraftId ? "Test active" : "Airborne";
     elements.airAmbulanceWatchText.textContent = `${aircraft.specialReason} · ${aircraft.flight} · ${aircraft.airAmbulanceStatus || placePhrase(aircraft)} · ${formatDistance(aircraft.distance)}`;
     return;
   }
@@ -2277,9 +2287,10 @@ function playUrgentChime() {
 
 function renderAirAmbulanceAlert() {
   const testAircraft = activeTestAlertAircraft();
-  const aircraft = activeCloseRescueAircraft() || testAircraft;
+  const aircraft = emergencyFocusAircraft();
   const inRange = Boolean(aircraft);
   const testActive = Boolean(testAircraft);
+  document.body.classList.toggle("emergency-focus", Boolean(inRange || testActive));
   elements.airAmbulanceAlert.hidden = !(inRange || testActive);
   elements.airAmbulanceAlert.classList.toggle("active", Boolean(inRange || testActive));
   if (testActive && aircraft?.id === state.testAircraftId) {
@@ -2331,6 +2342,7 @@ function removeTestAlertAircraft() {
   state.trackHistory.delete(state.testAircraftId);
   if (state.selectedAircraftKey === state.testAircraftId) state.selectedAircraftKey = "";
   if (Date.now() >= state.testAlertUntil) {
+    document.body.classList.remove("emergency-focus");
     elements.airAmbulanceAlert.hidden = true;
     elements.airAmbulanceAlert.classList.remove("active");
   }
@@ -3028,7 +3040,7 @@ state.nightScheduleTimer = window.setInterval(() => {
   if (state.nightScheduleEnabled) applyDisplayPreferences();
 }, 60 * 1000);
 state.spotlightTimer = window.setInterval(() => {
-  if (activeRescueAircraft()) {
+  if (emergencyFocusAircraft() || activeRescueAircraft()) {
     renderSpotlight();
     return;
   }
