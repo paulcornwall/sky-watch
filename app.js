@@ -328,14 +328,11 @@ let state = {
   news: [],
   newsUpdatedAt: null,
   newsTimer: null,
-  deploymentsTimer: null,
   autoCollapseTimer: null,
   controlsHideTimer: null,
   feedMode: liveServerAvailable ? "live server" : "browser direct",
   locationMode: launchPosition ? launchPosition.mode : savedPosition ? "saved home" : "location not set",
   homeLabel: bootPosition?.label || "",
-  deploymentSummary: null,
-  deploymentSummaryError: "",
 };
 
 const demoAircraft = [
@@ -935,29 +932,7 @@ function localDeploymentLogText() {
 }
 
 async function showAirAmbulanceDeploymentLog() {
-  if (liveServerAvailable) {
-    try {
-      const response = await fetch("/api/deployments", { cache: "no-store" });
-      if (response.ok) {
-        const payload = await response.json();
-        if (payload.central && Array.isArray(payload.items)) {
-          const lines = payload.items.length
-            ? payload.items.map((entry) => {
-                const aircraft = [entry.callsign, entry.registration].filter(Boolean).join(" / ") || "Cornwall Air Ambulance";
-                const seen = entry.firstSeenAt ? formatHour(entry.firstSeenAt) : "Time unavailable";
-                const area = entry.area || "Route unavailable";
-                return `${seen} · ${aircraft}\nfrom: ${entry.from || "Newquay base"}\nto/current area: ${area}`;
-              })
-            : ["No central deployments detected in the last 24 hours."];
-          window.alert(`Air Ambulance Deployments — 24h\nCentral tracker live\n\n${lines.join("\n\n")}`);
-          return;
-        }
-      }
-    } catch (error) {
-      console.warn(error);
-    }
-  }
-  window.alert(`Air Ambulance Deployments — 24h\nCentral tracker unavailable — using this device only\n\n${localDeploymentLogText()}`);
+  window.alert(`Air Ambulance Deployments — 24h\nDeployment counter is stored on this device only\n\n${localDeploymentLogText()}`);
 }
 
 function updateRescueLog() {
@@ -2585,38 +2560,8 @@ function renderRescueLog() {
 function renderAirAmbulanceDeployments() {
   if (!elements.airAmbulanceDeploymentCount) return;
   state.airAmbulanceDeployments = pruneAirAmbulanceDeployments(state.airAmbulanceDeployments);
-  if (state.deploymentSummary?.central) {
-    elements.airAmbulanceDeploymentCount.textContent = Number(state.deploymentSummary.count24h || 0).toLocaleString();
-    if (elements.airAmbulanceDeploymentStatus) elements.airAmbulanceDeploymentStatus.textContent = "Central tracker live";
-    return;
-  }
   elements.airAmbulanceDeploymentCount.textContent = state.airAmbulanceDeployments.length.toLocaleString();
-  if (elements.airAmbulanceDeploymentStatus) {
-    elements.airAmbulanceDeploymentStatus.textContent = state.deploymentSummaryError
-      ? "Central tracker not configured — using this device only"
-      : "Air Ambulance Deployments — 24h";
-  }
-}
-
-async function fetchDeploymentSummary() {
-  if (!liveServerAvailable) {
-    state.deploymentSummary = null;
-    state.deploymentSummaryError = "Central tracker not configured — using this device only";
-    renderAirAmbulanceDeployments();
-    return;
-  }
-  try {
-    const response = await fetch("/api/deployments/summary", { cache: "no-store" });
-    if (!response.ok) throw new Error(`Deployment summary returned ${response.status}`);
-    const payload = await response.json();
-    state.deploymentSummary = payload;
-    state.deploymentSummaryError = payload.central ? "" : "Central tracker not configured — using this device only";
-  } catch (error) {
-    console.warn(error);
-    state.deploymentSummary = null;
-    state.deploymentSummaryError = "Central tracker not configured — using this device only";
-  }
-  renderAirAmbulanceDeployments();
+  if (elements.airAmbulanceDeploymentStatus) elements.airAmbulanceDeploymentStatus.textContent = "Device-only counter";
 }
 
 function renderStats() {
@@ -2886,6 +2831,11 @@ function removeTestAlertAircraft() {
     elements.airAmbulanceAlertTitle.textContent = "Air ambulance alert";
     elements.airAmbulanceAlertText.textContent = "Monitoring Cornwall Air Ambulance";
     if (state.radarExpanded) setRadarExpanded(false, true);
+    renderRadarSelection(null);
+    elements.mapLabel.textContent = "Live sector map";
+    elements.mapRangeLabel.textContent = `${Number(elements.radius.value) || 50} mi radius`;
+  } else {
+    renderRadarSelection(realEmergency);
   }
   applyFilter();
   renderAirAmbulanceAlert();
@@ -2947,18 +2897,22 @@ function testAirAmbulanceAlert() {
   setMessage("Test nearby alert running", true);
   state.testAlertUntil = Date.now() + 45000;
   const testAircraft = createTestAirAmbulanceTrack();
-  if (testAircraft) {
-    state.testAlertAircraft = testAircraft;
-    state.aircraft = [testAircraft, ...state.aircraft.filter((aircraft) => aircraft.id !== state.testAircraftId)];
-    rememberTracks([testAircraft]);
-    closeSettingsPanel();
-    applyFilter();
-    selectAircraft(testAircraft);
-    state.lastEmergencyFocusAt = Date.now();
-    setRadarExpanded(true, true);
-    window.clearTimeout(state.testAlertClearTimer);
-    state.testAlertClearTimer = window.setTimeout(removeTestAlertAircraft, 45000);
+  if (!testAircraft) {
+    state.testAlertUntil = 0;
+    setMessage("Test alert could not start — check location", true);
+    console.warn("Sky Watch test alert could not start — no base location");
+    return;
   }
+  state.testAlertAircraft = testAircraft;
+  state.aircraft = [testAircraft, ...state.aircraft.filter((aircraft) => aircraft.id !== state.testAircraftId)];
+  rememberTracks([testAircraft]);
+  closeSettingsPanel();
+  applyFilter();
+  selectAircraft(testAircraft);
+  state.lastEmergencyFocusAt = Date.now();
+  setRadarExpanded(true, true);
+  window.clearTimeout(state.testAlertClearTimer);
+  state.testAlertClearTimer = window.setTimeout(removeTestAlertAircraft, 45000);
   playUrgentChime();
   renderAirAmbulanceAlert();
   showTestEmergencyFocus(testAircraft);
@@ -3616,30 +3570,30 @@ function markUserInput() {
   state.lastInputAt = Date.now();
 }
 
-elements.locate.addEventListener("click", locateUser);
-elements.changeLocation.addEventListener("click", () => showLocationSetup("Change saved base location"));
-elements.postcodeButton.addEventListener("click", setLocationFromPostcode);
-elements.postcodeInput.addEventListener("keydown", (event) => {
+elements.locate?.addEventListener("click", locateUser);
+elements.changeLocation?.addEventListener("click", () => showLocationSetup("Change saved base location"));
+elements.postcodeButton?.addEventListener("click", setLocationFromPostcode);
+elements.postcodeInput?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") setLocationFromPostcode();
 });
-elements.setupLocate.addEventListener("click", locateUser);
-elements.setupLater.addEventListener("click", () => {
+elements.setupLocate?.addEventListener("click", locateUser);
+elements.setupLater?.addEventListener("click", () => {
   setFallbackPreview();
 });
-elements.expandRadar.addEventListener("click", () => setRadarExpanded(!state.radarExpanded, true));
-elements.expandRadarAlert.addEventListener("click", () => setRadarExpanded(true, true));
-elements.airAmbulanceZoom.checked = state.airAmbulanceZoomEnabled;
-elements.autoCollapse.checked = state.autoCollapseMap;
-elements.airAmbulanceZoom.addEventListener("change", () => {
+elements.expandRadar?.addEventListener("click", () => setRadarExpanded(!state.radarExpanded, true));
+elements.expandRadarAlert?.addEventListener("click", () => setRadarExpanded(true, true));
+if (elements.airAmbulanceZoom) elements.airAmbulanceZoom.checked = state.airAmbulanceZoomEnabled;
+if (elements.autoCollapse) elements.autoCollapse.checked = state.autoCollapseMap;
+elements.airAmbulanceZoom?.addEventListener("change", () => {
   state.airAmbulanceZoomEnabled = elements.airAmbulanceZoom.checked;
   window.localStorage.setItem("skyWatchAirAmbulanceZoom", String(state.airAmbulanceZoomEnabled));
   if (state.airAmbulanceZoomEnabled) maybeExpandAirAmbulanceMap();
 });
-elements.autoCollapse.addEventListener("change", () => {
+elements.autoCollapse?.addEventListener("change", () => {
   state.autoCollapseMap = elements.autoCollapse.checked;
   window.localStorage.setItem("skyWatchAutoCollapseMap", String(state.autoCollapseMap));
 });
-elements.refresh.addEventListener("click", () => {
+elements.refresh?.addEventListener("click", () => {
   const lat = Number(elements.lat.value);
   const lon = Number(elements.lon.value);
   if (Number.isFinite(lat) && Number.isFinite(lon)) {
@@ -3660,15 +3614,15 @@ elements.refresh.addEventListener("click", () => {
   }
   refreshAircraft();
 });
-elements.kiosk.addEventListener("click", toggleKiosk);
-elements.settingsClose.addEventListener("click", closeSettingsPanel);
-elements.displayMode.addEventListener("click", toggleDisplayMode);
-elements.nightMode.addEventListener("click", toggleNightMode);
-elements.nightDim.addEventListener("change", updateNightControls);
-elements.nightSchedule.addEventListener("change", updateNightControls);
-elements.emergencyNightChime.addEventListener("change", updateNightControls);
-elements.nightStart.addEventListener("change", updateNightControls);
-elements.nightEnd.addEventListener("change", updateNightControls);
+elements.kiosk?.addEventListener("click", toggleKiosk);
+elements.settingsClose?.addEventListener("click", closeSettingsPanel);
+elements.displayMode?.addEventListener("click", toggleDisplayMode);
+elements.nightMode?.addEventListener("click", toggleNightMode);
+elements.nightDim?.addEventListener("change", updateNightControls);
+elements.nightSchedule?.addEventListener("change", updateNightControls);
+elements.emergencyNightChime?.addEventListener("change", updateNightControls);
+elements.nightStart?.addEventListener("change", updateNightControls);
+elements.nightEnd?.addEventListener("change", updateNightControls);
 elements.displayPreset?.addEventListener("change", updateDisplayPreset);
 elements.deploymentTone?.addEventListener("change", updateWatchSettings);
 elements.nearbyTone?.addEventListener("change", updateWatchSettings);
@@ -3694,15 +3648,18 @@ elements.resetSkyWatch?.addEventListener("click", () => {
   window.location.href = window.location.pathname;
 });
 elements.refreshScreen?.addEventListener("click", refreshScreenHard);
-elements.chime.addEventListener("click", toggleChime);
-elements.testAlert?.addEventListener("click", testAirAmbulanceAlert);
+elements.chime?.addEventListener("click", toggleChime);
+elements.testAlert?.addEventListener("click", () => {
+  console.info("Test nearby alert button pressed");
+  testAirAmbulanceAlert();
+});
 elements.airAmbulanceDeploymentsTile?.addEventListener("click", showAirAmbulanceDeploymentLog);
-elements.radius.addEventListener("change", () => {
+elements.radius?.addEventListener("change", () => {
   window.localStorage.setItem("skyWatchRadius", elements.radius.value);
   refreshAircraft();
 });
-elements.filter.addEventListener("input", applyFilter);
-elements.canvas.addEventListener("click", selectRadarCanvasAircraft);
+elements.filter?.addEventListener("input", applyFilter);
+elements.canvas?.addEventListener("click", selectRadarCanvasAircraft);
 for (const button of elements.aircraftFilters) {
   button.addEventListener("click", () => setAircraftCategory(button.dataset.aircraftFilter));
 }
@@ -3746,7 +3703,6 @@ renderStats();
 updateDateTime();
 renderTemperature();
 renderTicker();
-fetchDeploymentSummary();
 registerServiceWorker();
 animate();
 refreshMapSize(300);
@@ -3767,7 +3723,6 @@ state.refreshTimer = window.setInterval(refreshAircraft, 60000);
 state.weatherTimer = window.setInterval(() => fetchWeather(state.userPosition), 30 * 60 * 1000);
 state.bitcoinTimer = window.setInterval(fetchBitcoin, 5 * 60 * 1000);
 state.newsTimer = window.setInterval(fetchNews, 5 * 60 * 1000);
-state.deploymentsTimer = window.setInterval(fetchDeploymentSummary, 60 * 1000);
 state.updateClock = window.setInterval(renderStats, 1000);
 state.dateClock = window.setInterval(updateDateTime, 1000);
 state.staleTimer = window.setInterval(renderFeedStatus, 30000);

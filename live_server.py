@@ -240,9 +240,9 @@ def central_tracker_available():
 
 def central_tracker_status():
     if not DATABASE_URL:
-        return "Central deployment tracker not configured"
+        return "Device-only counter"
     if not psycopg:
-        return "Central deployment tracker unavailable - psycopg not installed"
+        return "Device-only counter"
     if deployment_state.get("last_error"):
         return f"Central deployment tracker retrying - {deployment_state['last_error']}"
     return "Central tracker live"
