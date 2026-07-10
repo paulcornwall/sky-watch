@@ -416,9 +416,21 @@ def poll_air_ambulance_deployments():
                 if aircraft.get("lat") is None or aircraft.get("lon") is None:
                     continue
                 distance = distance_miles({"lat": aircraft["lat"], "lon": aircraft["lon"]}, NEWQUAY_BASE)
-                if distance <= 1 or not appears_airborne(aircraft):
-                    continue
                 active_key = compact(aircraft.get("hex") or aircraft.get("registration") or aircraft.get("callsign") or "air-ambulance")
+                if distance <= 1:
+                    conn.execute(
+                        """
+                        UPDATE air_ambulance_deployments
+                        SET ended_at = %s, last_seen_at = %s, status = 'Returned to base',
+                            area_label = 'Newquay base', lat = %s, lon = %s,
+                            distance_from_newquay_base = %s, source = %s
+                        WHERE active_key = %s AND ended_at IS NULL
+                        """,
+                        (now, now, aircraft.get("lat"), aircraft.get("lon"), distance, aircraft.get("source"), active_key),
+                    )
+                    continue
+                if not appears_airborne(aircraft):
+                    continue
                 current_keys.add(active_key)
                 conn.execute(
                     """

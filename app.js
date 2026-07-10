@@ -2593,7 +2593,7 @@ function renderAirAmbulanceDeployments() {
   elements.airAmbulanceDeploymentCount.textContent = state.airAmbulanceDeployments.length.toLocaleString();
   if (elements.airAmbulanceDeploymentStatus) {
     elements.airAmbulanceDeploymentStatus.textContent = state.deploymentSummaryError
-      ? "Central tracker unavailable — this device only"
+      ? "Central tracker not configured — using this device only"
       : "Air Ambulance Deployments — 24h";
   }
 }
@@ -2601,7 +2601,7 @@ function renderAirAmbulanceDeployments() {
 async function fetchDeploymentSummary() {
   if (!liveServerAvailable) {
     state.deploymentSummary = null;
-    state.deploymentSummaryError = "Central deployment tracker not configured";
+    state.deploymentSummaryError = "Central tracker not configured — using this device only";
     renderAirAmbulanceDeployments();
     return;
   }
@@ -2610,11 +2610,11 @@ async function fetchDeploymentSummary() {
     if (!response.ok) throw new Error(`Deployment summary returned ${response.status}`);
     const payload = await response.json();
     state.deploymentSummary = payload;
-    state.deploymentSummaryError = payload.central ? "" : payload.status || "Central deployment tracker not configured";
+    state.deploymentSummaryError = payload.central ? "" : "Central tracker not configured — using this device only";
   } catch (error) {
     console.warn(error);
     state.deploymentSummary = null;
-    state.deploymentSummaryError = "Central tracker unavailable";
+    state.deploymentSummaryError = "Central tracker not configured — using this device only";
   }
   renderAirAmbulanceDeployments();
 }
@@ -2944,6 +2944,7 @@ function testAirAmbulanceAlert() {
     setFallbackPreview("Demo base loaded for test alert.");
   }
   removeTestAlertAircraft();
+  setMessage("Test nearby alert running", true);
   state.testAlertUntil = Date.now() + 45000;
   const testAircraft = createTestAirAmbulanceTrack();
   if (testAircraft) {
@@ -3694,7 +3695,7 @@ elements.resetSkyWatch?.addEventListener("click", () => {
 });
 elements.refreshScreen?.addEventListener("click", refreshScreenHard);
 elements.chime.addEventListener("click", toggleChime);
-elements.testAlert.addEventListener("click", testAirAmbulanceAlert);
+elements.testAlert?.addEventListener("click", testAirAmbulanceAlert);
 elements.airAmbulanceDeploymentsTile?.addEventListener("click", showAirAmbulanceDeploymentLog);
 elements.radius.addEventListener("change", () => {
   window.localStorage.setItem("skyWatchRadius", elements.radius.value);
