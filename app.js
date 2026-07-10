@@ -30,6 +30,7 @@ const elements = {
   showBitcoin: document.querySelector("#showBitcoinToggle"),
   clearDeploymentLog: document.querySelector("#clearDeploymentLogButton"),
   resetSkyWatch: document.querySelector("#resetSkyWatchButton"),
+  refreshScreen: document.querySelector("#refreshScreenButton"),
   displayPreset: document.querySelector("#displayPresetSelect"),
   expandRadar: document.querySelector("#expandRadarButton"),
   expandRadarAlert: document.querySelector("#expandRadarAlertButton"),
@@ -202,6 +203,7 @@ const storedRadius = window.localStorage.getItem("skyWatchRadius");
 const storedAircraftCategory = window.localStorage.getItem("skyWatchAircraftCategory") || "all";
 const storedDisplayPreset = window.localStorage.getItem("skyWatchDisplayPreset") || "wall";
 const airAmbulancePhoto = "./assets/cornwall-air-ambulance-photo.png";
+const coastguardPhoto = "./assets/coastguard-helicopter.svg";
 const logoCache = new Map();
 
 function loadStringSet(key) {
@@ -873,6 +875,15 @@ function isAirAmbulanceDeployed(aircraft) {
   return distanceFromCoords({ lat: aircraft.lat, lon: aircraft.lon }, airAmbulanceWaypoints.base) > 1;
 }
 
+function isCoastguardDeployed(aircraft) {
+  if (aircraft?.specialReason !== "Coastguard") return false;
+  if (!Number.isFinite(aircraft.lat) || !Number.isFinite(aircraft.lon)) return false;
+  if (isLandedAircraft(aircraft)) return false;
+  const altitude = Number(aircraft.altitude);
+  const speed = Number(aircraft.speed);
+  return (Number.isFinite(altitude) && altitude > 300) || (Number.isFinite(speed) && speed > 35);
+}
+
 function updateAirAmbulanceDeployments() {
   state.airAmbulanceDeployments = pruneAirAmbulanceDeployments(state.airAmbulanceDeployments);
   const deployedAircraft = state.aircraft.filter((aircraft) => aircraft.id !== state.testAircraftId).filter(isAirAmbulanceDeployed);
@@ -1524,6 +1535,14 @@ function airlineLogoMarkup(aircraft, extraClass = "", id = "") {
       </span>
     `;
   }
+  if (aircraft.specialReason === "Coastguard") {
+    return `
+      <span ${id ? `id="${id}" ` : ""}class="airline-logo special-photo coastguard-photo ${extraClass}" aria-label="Coastguard rescue helicopter" data-logo-key="COASTGUARD">
+        <img src="${coastguardPhoto}" alt="" loading="eager" decoding="async" />
+        <span class="logo-initials">CG</span>
+      </span>
+    `;
+  }
   const branding = brandingForFlight(aircraft.flight);
   const logo = airlineLogoUrl(aircraft.flight);
   preloadLogo(logo);
@@ -1770,7 +1789,10 @@ function specialAircraftReason(aircraft) {
 }
 
 function decorateAircraft(aircraft) {
-  const specialReason = specialAircraftReason(aircraft);
+  let specialReason = specialAircraftReason(aircraft);
+  if (specialReason === "Coastguard" && !isCoastguardDeployed({ ...aircraft, specialReason })) {
+    specialReason = "";
+  }
   const skybus = isSkybus({ ...aircraft, specialReason });
   const routeUnavailable = routeNeedsLookup(aircraft);
   const decorated = {
@@ -2110,12 +2132,23 @@ function initMap() {
 }
 
 function aircraftMarkerClass(aircraft) {
-  if (aircraft.specialReason === "Air ambulance") return "special air-ambulance helicopter";
-  if (aircraft.specialReason === "Coastguard") return "special coastguard helicopter";
-  if (aircraft.specialReason === "Military") return "special military";
-  if (aircraft.skybus || isSkybus(aircraft)) return "skybus";
-  if (aircraftCategoryMatches(aircraft, "helicopters")) return "helicopter";
-  return "passenger";
+  const typeClass = aircraftTypeClass(aircraft);
+  const interest = aircraft.specialReason || aircraft.skybus ? " interest" : "";
+  if (aircraft.specialReason === "Air ambulance") return `special air-ambulance ${typeClass}${interest}`;
+  if (aircraft.specialReason === "Coastguard") return `special coastguard ${typeClass}${interest}`;
+  if (aircraft.specialReason === "Military") return `special military ${typeClass}${interest}`;
+  if (aircraft.skybus || isSkybus(aircraft)) return `skybus ${typeClass}${interest}`;
+  return `${typeClass}${interest}`;
+}
+
+function aircraftTypeClass(aircraft) {
+  const text = [aircraft.flight, aircraft.aircraftType, aircraft.type, aircraft.t, aircraft.category, aircraft.airline, aircraft.specialReason]
+    .join(" ")
+    .toLowerCase();
+  if (/(heli|helicopter|aw169|aw139|ec135|h145|s-92|s92|rotor|coastguard|helimed)/i.test(text)) return "helicopter";
+  if (/(a3[0-9]{2}|a2[0-9]{2}|b7[0-9]{2}|b38m|b39m|e17[05]|e19[05]|embraer|airbus|boeing|jet|citation|phenom|gulfstream|falcon)/i.test(text)) return "jet";
+  if (/(dhc6|dhc-6|twin otter|cessna|piper|beech|pc-12|pc12|king air|prop|turboprop)/i.test(text)) return "prop";
+  return "plane";
 }
 
 function aircraftIcon(aircraft) {
@@ -2624,7 +2657,7 @@ function activeAirAmbulance() {
 
 function isRescueAircraft(aircraft) {
   if (aircraft?.specialReason === "Air ambulance") return state.airAmbulanceWatchEnabled;
-  if (aircraft?.specialReason === "Coastguard") return state.coastguardWatchEnabled;
+  if (aircraft?.specialReason === "Coastguard") return state.coastguardWatchEnabled && isCoastguardDeployed(aircraft);
   return false;
 }
 
@@ -2831,6 +2864,9 @@ function showTestEmergencyFocus(aircraft) {
 }
 
 function testAirAmbulanceAlert() {
+  if (!state.userPosition) {
+    setFallbackPreview("Demo base loaded for test alert.");
+  }
   state.testAlertUntil = Date.now() + 45000;
   const testAircraft = createTestAirAmbulanceTrack();
   if (testAircraft) {
@@ -2927,6 +2963,25 @@ function updateInfoSettings() {
   state.showNews = elements.showNews?.checked !== false;
   state.showBitcoin = elements.showBitcoin?.checked !== false;
   applyInfoSettings();
+}
+
+async function refreshScreenHard() {
+  setMessage("Refreshing Sky Watch screen and clearing cached app files...", true);
+  try {
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((key) => key.includes("sky-watch")).map((key) => caches.delete(key)));
+    }
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    }
+  } catch (error) {
+    console.warn(error);
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set("refresh", String(Date.now()));
+  window.location.replace(url.toString());
 }
 
 function applyDisplayPreferences() {
@@ -3108,20 +3163,64 @@ function alertForSpecialAircraft() {
   }
 }
 
-function drawPlane(ctx, x, y, heading, color) {
+function drawPlane(ctx, x, y, heading, color, aircraft = null) {
+  const typeClass = aircraft ? aircraftTypeClass(aircraft) : "plane";
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(((heading || 0) * Math.PI) / 180);
-  ctx.beginPath();
-  ctx.moveTo(0, -9);
-  ctx.lineTo(6, 7);
-  ctx.lineTo(0, 4);
-  ctx.lineTo(-6, 7);
-  ctx.closePath();
+  ctx.strokeStyle = color;
   ctx.fillStyle = color;
   ctx.shadowColor = color;
   ctx.shadowBlur = 10;
-  ctx.fill();
+  ctx.beginPath();
+  if (typeClass === "helicopter") {
+    ctx.roundRect?.(-3, -8, 6, 16, 3);
+    if (typeof ctx.roundRect !== "function") ctx.rect(-3, -8, 6, 16);
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-12, -2);
+    ctx.lineTo(12, -2);
+    ctx.moveTo(0, -14);
+    ctx.lineTo(0, 10);
+    ctx.moveTo(0, 8);
+    ctx.lineTo(9, 12);
+    ctx.stroke();
+  } else if (typeClass === "jet") {
+    ctx.moveTo(0, -11);
+    ctx.lineTo(5, 5);
+    ctx.lineTo(13, 9);
+    ctx.lineTo(4, 10);
+    ctx.lineTo(0, 5);
+    ctx.lineTo(-4, 10);
+    ctx.lineTo(-13, 9);
+    ctx.lineTo(-5, 5);
+    ctx.closePath();
+    ctx.fill();
+  } else if (typeClass === "prop") {
+    ctx.moveTo(0, -10);
+    ctx.lineTo(4, 7);
+    ctx.lineTo(15, 6);
+    ctx.lineTo(4, 10);
+    ctx.lineTo(0, 7);
+    ctx.lineTo(-4, 10);
+    ctx.lineTo(-15, 6);
+    ctx.lineTo(-4, 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-7, -12);
+    ctx.lineTo(7, -8);
+    ctx.stroke();
+  } else {
+    ctx.moveTo(0, -9);
+    ctx.lineTo(6, 7);
+    ctx.lineTo(0, 4);
+    ctx.lineTo(-6, 7);
+    ctx.closePath();
+    ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -3291,7 +3390,7 @@ function drawRadar() {
     const current = trackedPositions.get(aircraftKey(aircraft));
     if (!current) continue;
     const color = aircraft.specialReason ? "#f0bd61" : aircraft.skybus ? "#53b9ff" : aircraft.altitude === "ground" ? "#f0bd61" : "#7ccad7";
-    drawPlane(ctx, current.x, current.y, aircraft.heading || aircraft.bearing, color);
+    drawPlane(ctx, current.x, current.y, aircraft.heading || aircraft.bearing, color, aircraft);
     const selected = aircraftKey(aircraft) === state.selectedAircraftKey;
     const label = aircraft.specialReason ? aircraft.specialReason.replace("Air ambulance", "AIR AMB") : aircraft.skybus ? "SKYBUS" : aircraft.flight;
     ctx.save();
@@ -3510,6 +3609,7 @@ elements.resetSkyWatch?.addEventListener("click", () => {
   }
   window.location.href = window.location.pathname;
 });
+elements.refreshScreen?.addEventListener("click", refreshScreenHard);
 elements.chime.addEventListener("click", toggleChime);
 elements.testAlert.addEventListener("click", testAirAmbulanceAlert);
 elements.airAmbulanceDeploymentsTile?.addEventListener("click", showAirAmbulanceDeploymentLog);

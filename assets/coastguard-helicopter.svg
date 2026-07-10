@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 220" role="img" aria-label="Coastguard rescue helicopter">
+  <defs>
+    <linearGradient id="sky" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#173d45"/>
+      <stop offset="1" stop-color="#08100d"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" x2="1">
+      <stop offset="0" stop-color="#d7481f"/>
+      <stop offset="0.58" stop-color="#ff7c48"/>
+      <stop offset="1" stop-color="#ffd6c6"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="220" fill="url(#sky)"/>
+  <path d="M0 158c44-18 82-23 126-9 45 14 78 9 119-7 31-13 54-13 75-5v83H0z" fill="#0f241c"/>
+  <path d="M45 93h170" stroke="#d7ffe2" stroke-width="7" stroke-linecap="round" opacity=".9"/>
+  <path d="M127 91v-25" stroke="#d7ffe2" stroke-width="5" stroke-linecap="round"/>
+  <path d="M88 68h82" stroke="#d7ffe2" stroke-width="4" stroke-linecap="round" opacity=".72"/>
+  <path d="M68 116c8-30 30-42 68-42h42c30 0 54 16 66 42 5 12-1 27-15 29l-100 14c-42 6-74-5-82-21-5-9 1-18 21-22z" fill="url(#body)"/>
+  <path d="M204 103l61-33 34 7-61 47z" fill="#ff7c48"/>
+  <path d="M273 72l29-22 8 8-27 26z" fill="#d7ffe2"/>
+  <path d="M88 108h42c9 0 15 7 12 15l-2 6H75c2-13 7-20 13-21z" fill="#07110e" opacity=".78"/>
+  <path d="M153 108h34c12 0 22 8 28 20h-70l4-13c1-4 2-7 4-7z" fill="#07110e" opacity=".78"/>
+  <path d="M63 139h163" stroke="#d7ffe2" stroke-width="5" stroke-linecap="round" opacity=".82"/>
+  <path d="M126 157l-18 24M169 151l21 27M95 181h121" stroke="#d7ffe2" stroke-width="5" stroke-linecap="round"/>
+  <text x="82" y="143" fill="#fff7e8" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700">COASTGUARD</text>
+  <circle cx="234" cy="135" r="10" fill="#07110e" opacity=".8"/>
+</svg>
