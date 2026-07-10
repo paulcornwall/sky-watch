@@ -11,6 +11,8 @@ const elements = {
   nightDim: document.querySelector("#nightDimSelect"),
   nightSchedule: document.querySelector("#nightScheduleToggle"),
   emergencyNightChime: document.querySelector("#emergencyNightChimeToggle"),
+  deploymentTone: document.querySelector("#deploymentToneToggle"),
+  nearbyTone: document.querySelector("#nearbyToneToggle"),
   nightStart: document.querySelector("#nightStartInput"),
   nightEnd: document.querySelector("#nightEndInput"),
   chime: document.querySelector("#chimeButton"),
@@ -18,6 +20,16 @@ const elements = {
   changeLocation: document.querySelector("#changeLocationButton"),
   airAmbulanceZoom: document.querySelector("#airAmbulanceZoomToggle"),
   autoCollapse: document.querySelector("#autoCollapseToggle"),
+  airAmbulanceWatchToggle: document.querySelector("#airAmbulanceWatchToggle"),
+  coastguardWatchToggle: document.querySelector("#coastguardWatchToggle"),
+  militaryWatchToggle: document.querySelector("#militaryWatchToggle"),
+  showSun: document.querySelector("#showSunToggle"),
+  showTides: document.querySelector("#showTidesToggle"),
+  showRain: document.querySelector("#showRainToggle"),
+  showNews: document.querySelector("#showNewsToggle"),
+  showBitcoin: document.querySelector("#showBitcoinToggle"),
+  clearDeploymentLog: document.querySelector("#clearDeploymentLogButton"),
+  resetSkyWatch: document.querySelector("#resetSkyWatchButton"),
   displayPreset: document.querySelector("#displayPresetSelect"),
   expandRadar: document.querySelector("#expandRadarButton"),
   expandRadarAlert: document.querySelector("#expandRadarAlertButton"),
@@ -34,6 +46,10 @@ const elements = {
   weatherCondition: document.querySelector("#weatherCondition"),
   weatherRainSummary: document.querySelector("#weatherRainSummary"),
   weatherUpdatedTime: document.querySelector("#weatherUpdatedTime"),
+  sunReadout: document.querySelector("#sunReadout"),
+  sunSummary: document.querySelector("#sunSummary"),
+  tideReadout: document.querySelector("#tideReadout"),
+  tideSummary: document.querySelector("#tideSummary"),
   feedStatus: document.querySelector("#feedStatus"),
   wakeStatus: document.querySelector("#wakeStatus"),
   homeStatus: document.querySelector("#homeStatus"),
@@ -96,6 +112,7 @@ const airlinePrefixes = {
   BAW: "British Airways",
   EIN: "Aer Lingus",
   EXS: "Jet2",
+  IOS: "Isles of Scilly Skybus",
   DAL: "Delta Air Lines",
   DLH: "Lufthansa",
   EZY: "easyJet",
@@ -125,6 +142,7 @@ const airlineBranding = {
   BAW: { label: "BA", colors: ["#075aaa", "#e31e2f"] },
   EIN: { label: "EI", colors: ["#00843d", "#ffffff"] },
   EXS: { label: "LS", colors: ["#d71920", "#f5c400"] },
+  IOS: { label: "IOS", colors: ["#1f8ac0", "#ffffff"] },
   DAL: { label: "DL", colors: ["#c8102e", "#003a70"] },
   DLH: { label: "LH", colors: ["#05164d", "#ffcc00"] },
   EZY: { label: "U2", colors: ["#ff6600", "#ffffff"] },
@@ -166,10 +184,20 @@ const storedNightMode = window.localStorage.getItem("skyWatchNightMode") === "tr
 const storedNightDim = window.localStorage.getItem("skyWatchNightDim") || "0.2";
 const storedNightSchedule = window.localStorage.getItem("skyWatchNightSchedule") === "true";
 const storedEmergencyNightChime = window.localStorage.getItem("skyWatchEmergencyNightChime") === "true";
+const storedDeploymentTone = window.localStorage.getItem("skyWatchDeploymentTone") !== "false";
+const storedNearbyTone = window.localStorage.getItem("skyWatchNearbyTone") !== "false";
 const storedNightStart = window.localStorage.getItem("skyWatchNightStart") || "22:00";
 const storedNightEnd = window.localStorage.getItem("skyWatchNightEnd") || "07:00";
 const storedAirAmbulanceZoom = window.localStorage.getItem("skyWatchAirAmbulanceZoom") !== "false";
 const storedAutoCollapse = window.localStorage.getItem("skyWatchAutoCollapseMap") !== "false";
+const storedAirAmbulanceWatch = window.localStorage.getItem("skyWatchAirAmbulanceWatch") !== "false";
+const storedCoastguardWatch = window.localStorage.getItem("skyWatchCoastguardWatch") !== "false";
+const storedMilitaryWatch = window.localStorage.getItem("skyWatchMilitaryWatch") !== "false";
+const storedShowSun = window.localStorage.getItem("skyWatchShowSun") !== "false";
+const storedShowTides = window.localStorage.getItem("skyWatchShowTides") === "true";
+const storedShowRain = window.localStorage.getItem("skyWatchShowRain") !== "false";
+const storedShowNews = window.localStorage.getItem("skyWatchShowNews") !== "false";
+const storedShowBitcoin = window.localStorage.getItem("skyWatchShowBitcoin") !== "false";
 const storedRadius = window.localStorage.getItem("skyWatchRadius");
 const storedAircraftCategory = window.localStorage.getItem("skyWatchAircraftCategory") || "all";
 const storedDisplayPreset = window.localStorage.getItem("skyWatchDisplayPreset") || "wall";
@@ -183,6 +211,18 @@ function loadStringSet(key) {
   } catch (error) {
     console.warn(error);
     return new Set();
+  }
+}
+
+function loadCachedInfo(key, maxAgeMs) {
+  try {
+    const payload = JSON.parse(window.localStorage.getItem(key) || "null");
+    if (!payload || !Number.isFinite(Number(payload.cachedAt))) return null;
+    if (Date.now() - Number(payload.cachedAt) > maxAgeMs) return null;
+    return payload;
+  } catch (error) {
+    console.warn(error);
+    return null;
   }
 }
 
@@ -225,6 +265,7 @@ let state = {
   map: null,
   mapReady: false,
   mapTileError: false,
+  mapTileRetryDone: false,
   homeMarker: null,
   rangeRings: [],
   planeMarkers: [],
@@ -259,13 +300,25 @@ let state = {
   nightDim: Number(storedNightDim),
   nightScheduleEnabled: storedNightSchedule,
   emergencyNightChimeEnabled: storedEmergencyNightChime,
+  deploymentToneEnabled: storedDeploymentTone,
+  nearbyToneEnabled: storedNearbyTone,
   nightStart: storedNightStart,
   nightEnd: storedNightEnd,
+  airAmbulanceWatchEnabled: storedAirAmbulanceWatch,
+  coastguardWatchEnabled: storedCoastguardWatch,
+  militaryWatchEnabled: storedMilitaryWatch,
+  showSun: storedShowSun,
+  showTides: storedShowTides,
+  showRain: storedShowRain,
+  showNews: storedShowNews,
+  showBitcoin: storedShowBitcoin,
   weather: [],
   currentTemperature: null,
   weatherUpdatedAt: null,
   weatherError: "",
   weatherFailures: 0,
+  solar: loadCachedInfo("skyWatchSolarInfo", 24 * 60 * 60 * 1000),
+  tide: loadCachedInfo("skyWatchTideInfo", 6 * 60 * 60 * 1000),
   bitcoin: null,
   bitcoinUpdatedAt: null,
   news: [],
@@ -390,6 +443,18 @@ const coastguardIdentifiers = [
   "CG203",
   "G-HMGA",
   "G-HMGC",
+];
+
+const skybusIdentifiers = [
+  "IOS",
+  "SKYBUS",
+  "SCILLONIA",
+  "ISLES OF SCILLY SKYBUS",
+  "G-BIHO",
+  "GBIHO",
+  "DHC6",
+  "DHC-6",
+  "TWIN OTTER",
 ];
 
 const localPlaces = [
@@ -642,6 +707,7 @@ function applyHomePosition(position, message = "Base position saved on this devi
   hideLocationSetup();
   applyDisplayPreferences();
   setMessage(message, true);
+  updateSolarInfo(state.userPosition);
   refreshAircraft();
   fetchWeather(state.userPosition);
   return true;
@@ -726,6 +792,10 @@ function saveMilitaryLog() {
 
 function updateMilitaryLog() {
   state.militaryLog = pruneMilitaryLog(state.militaryLog);
+  if (!state.militaryWatchEnabled) {
+    saveMilitaryLog();
+    return;
+  }
   const nearbyMilitary = state.aircraft.filter(
     (aircraft) => aircraft.specialReason === "Military" && Number.isFinite(aircraft.distance) && aircraft.distance <= 5,
   );
@@ -926,6 +996,100 @@ function forecastSummary24() {
   return `24h forecast: dry outlook · ${tempText}`;
 }
 
+function dayKey(date = new Date()) {
+  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+}
+
+function calculateSolarTimes(position, date = new Date()) {
+  if (!position || !Number.isFinite(position.lat) || !Number.isFinite(position.lon)) return null;
+  const zenith = 90.833;
+  const toRad = (value) => (value * Math.PI) / 180;
+  const toDeg = (value) => (value * 180) / Math.PI;
+  const dayStart = new Date(date.getFullYear(), 0, 0);
+  const n = Math.floor((date - dayStart) / 86400000);
+  const lngHour = position.lon / 15;
+
+  function solarTime(isRise) {
+    const t = n + ((isRise ? 6 : 18) - lngHour) / 24;
+    const meanAnomaly = (0.9856 * t) - 3.289;
+    let trueLongitude = meanAnomaly + (1.916 * Math.sin(toRad(meanAnomaly))) + (0.02 * Math.sin(2 * toRad(meanAnomaly))) + 282.634;
+    trueLongitude = (trueLongitude + 360) % 360;
+    let rightAscension = toDeg(Math.atan(0.91764 * Math.tan(toRad(trueLongitude))));
+    rightAscension = (rightAscension + 360) % 360;
+    rightAscension += Math.floor(trueLongitude / 90) * 90 - Math.floor(rightAscension / 90) * 90;
+    rightAscension /= 15;
+    const sinDeclination = 0.39782 * Math.sin(toRad(trueLongitude));
+    const cosDeclination = Math.cos(Math.asin(sinDeclination));
+    const cosHour = (Math.cos(toRad(zenith)) - (sinDeclination * Math.sin(toRad(position.lat)))) /
+      (cosDeclination * Math.cos(toRad(position.lat)));
+    if (cosHour > 1 || cosHour < -1) return null;
+    const hourAngle = (isRise ? 360 - toDeg(Math.acos(cosHour)) : toDeg(Math.acos(cosHour))) / 15;
+    const localMeanTime = hourAngle + rightAscension - (0.06571 * t) - 6.622;
+    const utcHour = (localMeanTime - lngHour + 24) % 24;
+    const result = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    result.setUTCHours(Math.floor(utcHour), Math.round((utcHour % 1) * 60), 0, 0);
+    return result.getTime();
+  }
+
+  const sunrise = solarTime(true);
+  const sunset = solarTime(false);
+  if (!sunrise || !sunset) return null;
+  return {
+    cachedAt: Date.now(),
+    day: dayKey(date),
+    lat: Number(position.lat),
+    lon: Number(position.lon),
+    sunrise,
+    sunset,
+  };
+}
+
+function updateSolarInfo(position = state.userPosition) {
+  if (!state.showSun || !position) {
+    renderSolar();
+    return;
+  }
+  const cached = state.solar;
+  const today = dayKey();
+  const sameArea =
+    cached &&
+    cached.day === today &&
+    Math.abs(Number(cached.lat) - Number(position.lat)) < 0.05 &&
+    Math.abs(Number(cached.lon) - Number(position.lon)) < 0.05;
+  if (sameArea) {
+    renderSolar();
+    return;
+  }
+  const solar = calculateSolarTimes(position);
+  if (solar) {
+    state.solar = solar;
+    try {
+      window.localStorage.setItem("skyWatchSolarInfo", JSON.stringify(solar));
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+  renderSolar();
+}
+
+function renderSolar() {
+  if (!elements.sunReadout || !elements.sunSummary) return;
+  elements.sunReadout.hidden = !state.showSun;
+  if (!state.showSun) return;
+  if (!state.solar?.sunrise || !state.solar?.sunset) {
+    elements.sunSummary.textContent = "Sunrise/sunset unavailable";
+    return;
+  }
+  elements.sunSummary.textContent = `Sunrise ${formatClock(new Date(state.solar.sunrise))} · Sunset ${formatClock(new Date(state.solar.sunset))}`;
+}
+
+function renderTides() {
+  if (!elements.tideReadout || !elements.tideSummary) return;
+  elements.tideReadout.hidden = !state.showTides;
+  if (!state.showTides) return;
+  elements.tideSummary.textContent = state.tide?.summary || "Tide data unavailable";
+}
+
 function updateForecastVisual() {
   if (!elements.rainChancePanel || !elements.rainChanceValue) return;
   const { chance, firstRain, rainAmount } = rainChanceNextHours(3);
@@ -962,31 +1126,41 @@ function renderTicker() {
   if (state.filtered[0]) {
     items.push(`Nearest track ${state.filtered[0].flight} ${formatDistance(state.filtered[0].distance)} away`);
   }
-  const { firstRain, strongestRain } = rainWindow();
   if (Number.isFinite(state.currentTemperature)) {
     items.push(`Local temp ${Math.round(state.currentTemperature)}°C`);
   }
-  items.push(plainRainStatus());
-  items.push(forecastSummary24());
+  if (state.showSun && state.solar?.sunrise && state.solar?.sunset) {
+    items.push(`Sunrise ${formatClock(new Date(state.solar.sunrise))} · sunset ${formatClock(new Date(state.solar.sunset))}`);
+  }
+  if (state.showTides) {
+    items.push(state.tide?.summary || "Tide data unavailable");
+  }
+  const { firstRain, strongestRain } = rainWindow();
+  if (state.showRain) {
+    items.push(plainRainStatus());
+    items.push(forecastSummary24());
 
-  if (firstRain) {
-    items.push(`Rain ${formatLeadTime(firstRain.timestamp)} around ${formatHour(firstRain.time)} - bring washing in`);
-    if (strongestRain && strongestRain !== firstRain) {
-      items.push(`Heaviest shower risk ${formatHour(strongestRain.time)} at ${strongestRain.rainChance}%`);
+    if (firstRain) {
+      items.push(`Rain ${formatLeadTime(firstRain.timestamp)} around ${formatHour(firstRain.time)} - bring washing in`);
+      if (strongestRain && strongestRain !== firstRain) {
+        items.push(`Heaviest shower risk ${formatHour(strongestRain.time)} at ${strongestRain.rainChance}%`);
+      }
+    } else if (!state.weather.length) {
+      items.push("Weather feed unavailable - rain watch paused");
     }
-  } else if (!state.weather.length) {
-    items.push("Weather feed unavailable - rain watch paused");
   }
 
   if (state.locationMode === "fallback location") {
     items.push("Base location not set - using London demo preview");
   }
 
-  for (const item of state.news.slice(0, 3)) {
-    items.push(`Breaking: ${item.title}`);
+  if (state.showNews) {
+    for (const item of state.news.slice(0, 3)) {
+      items.push(`Breaking: ${item.title}`);
+    }
   }
 
-  items.push(bitcoinTrendLabel());
+  if (state.showBitcoin) items.push(bitcoinTrendLabel());
 
   items.push(`Local time ${elements.localTime.textContent}`);
   const text = items.map((item) => `<span>${escapeHtml(item)}</span>`).join("");
@@ -1065,6 +1239,8 @@ function renderWeather() {
     elements.weatherUpdatedTime.textContent = state.weatherUpdatedAt ? formatClock(new Date(state.weatherUpdatedAt)) : "Waiting";
     updateForecastVisual();
     renderTemperature();
+    renderSolar();
+    renderTides();
     renderFeedStatus();
     renderTicker();
     return;
@@ -1091,6 +1267,8 @@ function renderWeather() {
   else elements.rainAlert.classList.remove("urgent");
   updateForecastVisual();
   renderTemperature();
+  renderSolar();
+  renderTides();
   renderFeedStatus();
   renderTicker();
 }
@@ -1270,6 +1448,7 @@ function updateDateTime() {
   const year = new Intl.DateTimeFormat(undefined, { year: "numeric" }).format(now);
   elements.localDate.innerHTML = `<span class="date-number">${escapeHtml(dateNumber)}</span> <span class="date-month">${escapeHtml(month)}</span> <span class="date-year">${escapeHtml(year)}</span>`;
   elements.localTime.textContent = formatClock(now, true);
+  if (state.showSun && state.userPosition && state.solar?.day !== dayKey(now)) updateSolarInfo(state.userPosition);
 }
 
 function formatAircraftType(value) {
@@ -1391,10 +1570,9 @@ function routeLabel(name, code = "") {
 }
 
 function routeTimeLabel(scheduled, estimated, fallbackLabel) {
-  const estimatedTime = formatTime(estimated);
-  const scheduledTime = formatTime(scheduled);
-  if (estimatedTime) return `Est ${estimatedTime}`;
-  if (scheduledTime) return `${fallbackLabel} ${scheduledTime}`;
+  void scheduled;
+  void estimated;
+  void fallbackLabel;
   return "";
 }
 
@@ -1417,6 +1595,7 @@ function displayServiceName(aircraft) {
   if (aircraft.specialReason === "Air ambulance") return "Cornwall Air Ambulance";
   if (aircraft.specialReason === "Coastguard") return "Coastguard Rescue";
   if (aircraft.specialReason === "Military") return aircraft.airline && aircraft.airline !== "Unknown airline" ? aircraft.airline : "Military aircraft";
+  if (aircraft.skybus || isSkybus(aircraft)) return "Isles of Scilly Skybus";
   return aircraft.airline && aircraft.airline !== "Unknown airline" ? aircraft.airline : aircraft.flight;
 }
 
@@ -1479,6 +1658,11 @@ function matchesIdentifier(aircraft, identifiers) {
     const raw = String(identifier).toUpperCase();
     return identity.toUpperCase().includes(raw) || compact.includes(compactIdentity(raw));
   });
+}
+
+function isSkybus(aircraft) {
+  const flight = String(aircraft?.flight || "").toUpperCase();
+  return /^IOS\d|^SCILLONIA/.test(flight) || matchesIdentifier(aircraft, skybusIdentifiers);
 }
 
 function nearestPlace(lat, lon) {
@@ -1587,11 +1771,21 @@ function specialAircraftReason(aircraft) {
 
 function decorateAircraft(aircraft) {
   const specialReason = specialAircraftReason(aircraft);
+  const skybus = isSkybus({ ...aircraft, specialReason });
+  const routeUnavailable = routeNeedsLookup(aircraft);
   const decorated = {
     ...aircraft,
+    airline: skybus ? "Isles of Scilly Skybus" : aircraft.airline,
+    skybus,
     specialReason,
     status: movementStatus(aircraft),
   };
+  if (skybus && routeUnavailable) {
+    decorated.from = "Land's End";
+    decorated.fromCode = "LEQ";
+    decorated.to = "Isles of Scilly";
+    decorated.toCode = "ISC";
+  }
   return {
     ...decorated,
     airAmbulanceStatus: specialReason === "Air ambulance" ? airAmbulanceTrackingStatus(decorated) : "",
@@ -1882,6 +2076,13 @@ function initMap() {
       state.mapReady = false;
       if (elements.mapTileWarning) elements.mapTileWarning.hidden = false;
       elements.mapLabel.textContent = "Radar fallback";
+      if (!state.mapTileRetryDone) {
+        state.mapTileRetryDone = true;
+        window.setTimeout(() => {
+          state.map?.invalidateSize();
+          tileLayer.redraw();
+        }, 1200);
+      }
       drawRadar();
     });
     tileLayer.on("tileload", () => {
@@ -1908,14 +2109,23 @@ function initMap() {
   }
 }
 
+function aircraftMarkerClass(aircraft) {
+  if (aircraft.specialReason === "Air ambulance") return "special air-ambulance helicopter";
+  if (aircraft.specialReason === "Coastguard") return "special coastguard helicopter";
+  if (aircraft.specialReason === "Military") return "special military";
+  if (aircraft.skybus || isSkybus(aircraft)) return "skybus";
+  if (aircraftCategoryMatches(aircraft, "helicopters")) return "helicopter";
+  return "passenger";
+}
+
 function aircraftIcon(aircraft) {
-  const reasonClass = aircraft.specialReason ? aircraft.specialReason.toLowerCase().replace(/[^a-z0-9]+/g, "-") : "";
+  const markerClass = aircraftMarkerClass(aircraft);
   const heading = mapHeading(aircraft);
-  const label = aircraft.specialReason ? aircraft.specialReason.replace("Air ambulance", "AIR AMB") : aircraft.flight;
+  const label = aircraft.specialReason ? aircraft.specialReason.replace("Air ambulance", "AIR AMB") : aircraft.skybus ? "SKYBUS" : aircraft.flight;
   const selected = state.selectedAircraftKey && aircraftKey(aircraft) === state.selectedAircraftKey;
   return L.divIcon({
     className: "",
-    html: `<span class="plane-map-marker${aircraft.specialReason ? ` special ${reasonClass}` : ""}${selected ? " selected" : ""}" style="--heading:${heading}deg" data-label="${escapeHtml(label)}"><span class="plane-shape"></span></span>`,
+    html: `<span class="plane-map-marker ${markerClass}${selected ? " selected" : ""}" style="--heading:${heading}deg" data-label="${escapeHtml(label)}"><span class="plane-shape"></span></span>`,
     iconSize: aircraft.specialReason ? [80, 42] : [72, 38],
     iconAnchor: aircraft.specialReason ? [17, 17] : [14, 14],
   });
@@ -2230,9 +2440,10 @@ function renderTable() {
     tr.style.setProperty("--logo-a", branding.colors[0]);
     tr.style.setProperty("--logo-b", branding.colors[1]);
     tr.classList.toggle("special-row", Boolean(aircraft.specialReason));
+    tr.classList.toggle("skybus-row", Boolean(aircraft.skybus));
     tr.innerHTML = `
       <td>${airlineLogoMarkup(aircraft)}</td>
-      <td><span class="flight">${aircraft.flight}</span><span class="subtle">${aircraft.airAmbulanceStatus || aircraft.specialReason || aircraft.status}</span></td>
+      <td><span class="flight">${aircraft.flight}</span><span class="subtle">${aircraft.airAmbulanceStatus || aircraft.specialReason || (aircraft.skybus ? "Skybus island service" : aircraft.status)}</span></td>
       <td>${aircraft.airline}</td>
       <td>${aircraft.aircraftType || "Type unknown"}</td>
       <td>${formatAltitude(aircraft.altitude)}</td>
@@ -2263,12 +2474,12 @@ function renderNearestList() {
   elements.nearestList.innerHTML = aircraftList
     .map((aircraft) => {
       const branding = brandingForFlight(aircraft.flight);
-      const status = aircraft.airAmbulanceStatus || aircraft.specialReason || aircraft.status;
+      const status = aircraft.airAmbulanceStatus || aircraft.specialReason || (aircraft.skybus ? "Skybus island service" : aircraft.status);
       const route = routeNeedsLookup(aircraft)
         ? "Route unavailable"
         : `${routeLabel(aircraft.from, aircraft.fromCode)} -> ${routeLabel(aircraft.to, aircraft.toCode)}`;
       return `
-        <button type="button" class="nearest-row${aircraft.specialReason ? " special" : ""}" data-aircraft-key="${escapeHtml(aircraftKey(aircraft))}" style="--logo-a:${branding.colors[0]};--logo-b:${branding.colors[1]}">
+        <button type="button" class="nearest-row${aircraft.specialReason ? " special" : ""}${aircraft.skybus ? " skybus" : ""}" data-aircraft-key="${escapeHtml(aircraftKey(aircraft))}" style="--logo-a:${branding.colors[0]};--logo-b:${branding.colors[1]}">
           ${airlineLogoMarkup(aircraft)}
           <span class="nearest-main">
             <strong>${escapeHtml(displayServiceName(aircraft))}</strong>
@@ -2374,8 +2585,10 @@ function renderSpotlight() {
   elements.spotlightAirline.textContent = `Callsign ${aircraft.flight}`;
   elements.spotlightStatus.textContent = aircraft.specialReason
     ? aircraft.airAmbulanceStatus || `${aircraft.specialReason} · ${aircraft.status}`
-    : aircraft.status;
-  elements.spotlightStatus.className = `spotlight-status${aircraft.specialReason ? " special" : ""}`;
+    : aircraft.skybus
+      ? `Skybus island service · ${aircraft.status}`
+      : aircraft.status;
+  elements.spotlightStatus.className = `spotlight-status${aircraft.specialReason ? " special" : ""}${aircraft.skybus ? " skybus" : ""}`;
   if (routeAvailable(aircraft)) {
     elements.spotlightFrom.innerHTML = routeCellMarkup(aircraft.from, aircraft.fromCode, routeTimeLabel(aircraft.scheduledDeparture, aircraft.estimatedDeparture, "Dep"));
     elements.spotlightTo.innerHTML = routeCellMarkup(aircraft.to, aircraft.toCode, routeTimeLabel(aircraft.scheduledArrival, aircraft.estimatedArrival, "Arr"));
@@ -2410,7 +2623,9 @@ function activeAirAmbulance() {
 }
 
 function isRescueAircraft(aircraft) {
-  return ["Air ambulance", "Coastguard"].includes(aircraft?.specialReason);
+  if (aircraft?.specialReason === "Air ambulance") return state.airAmbulanceWatchEnabled;
+  if (aircraft?.specialReason === "Coastguard") return state.coastguardWatchEnabled;
+  return false;
 }
 
 function activeRescueAircraft() {
@@ -2481,14 +2696,18 @@ function renderAirAmbulanceWatch() {
 function renderMilitaryLog() {
   state.militaryLog = pruneMilitaryLog(state.militaryLog);
   elements.militaryLogCount.textContent = state.militaryLog.length.toLocaleString();
+  if (!state.militaryWatchEnabled) {
+    elements.militaryLogText.textContent = "military watch off";
+    return;
+  }
   const latest = state.militaryLog[0];
   elements.militaryLogText.textContent = latest
     ? `${latest.flight} ${formatDistance(Number(latest.distance))} · seen ${formatHour(latest.time)}`
-    : "military within 5 mi";
+    : "no military within 5 mi";
 }
 
 function playUrgentChime() {
-  if (!state.chimeEnabled || !state.audioContext || (quietHoursActive() && !state.emergencyNightChimeEnabled)) return;
+  if (!state.nearbyToneEnabled || !state.chimeEnabled || !state.audioContext || (quietHoursActive() && !state.emergencyNightChimeEnabled)) return;
   const now = state.audioContext.currentTime;
   for (const [index, frequency] of [988, 1319, 1760, 1319].entries()) {
     const oscillator = state.audioContext.createOscillator();
@@ -2657,6 +2876,59 @@ function closeSettingsPanel() {
   refreshMapSize(80);
 }
 
+function applyWatchSettings() {
+  if (elements.deploymentTone) elements.deploymentTone.checked = state.deploymentToneEnabled;
+  if (elements.nearbyTone) elements.nearbyTone.checked = state.nearbyToneEnabled;
+  if (elements.airAmbulanceWatchToggle) elements.airAmbulanceWatchToggle.checked = state.airAmbulanceWatchEnabled;
+  if (elements.coastguardWatchToggle) elements.coastguardWatchToggle.checked = state.coastguardWatchEnabled;
+  if (elements.militaryWatchToggle) elements.militaryWatchToggle.checked = state.militaryWatchEnabled;
+  window.localStorage.setItem("skyWatchDeploymentTone", String(state.deploymentToneEnabled));
+  window.localStorage.setItem("skyWatchNearbyTone", String(state.nearbyToneEnabled));
+  window.localStorage.setItem("skyWatchAirAmbulanceWatch", String(state.airAmbulanceWatchEnabled));
+  window.localStorage.setItem("skyWatchCoastguardWatch", String(state.coastguardWatchEnabled));
+  window.localStorage.setItem("skyWatchMilitaryWatch", String(state.militaryWatchEnabled));
+  renderAirAmbulanceWatch();
+  renderMilitaryLog();
+  renderTicker();
+}
+
+function updateWatchSettings() {
+  state.deploymentToneEnabled = elements.deploymentTone?.checked !== false;
+  state.nearbyToneEnabled = elements.nearbyTone?.checked !== false;
+  state.airAmbulanceWatchEnabled = elements.airAmbulanceWatchToggle?.checked !== false;
+  state.coastguardWatchEnabled = elements.coastguardWatchToggle?.checked !== false;
+  state.militaryWatchEnabled = elements.militaryWatchToggle?.checked !== false;
+  applyWatchSettings();
+  applyFilter();
+}
+
+function applyInfoSettings() {
+  if (elements.showSun) elements.showSun.checked = state.showSun;
+  if (elements.showTides) elements.showTides.checked = state.showTides;
+  if (elements.showRain) elements.showRain.checked = state.showRain;
+  if (elements.showNews) elements.showNews.checked = state.showNews;
+  if (elements.showBitcoin) elements.showBitcoin.checked = state.showBitcoin;
+  document.body.classList.toggle("hide-rain-watch", !state.showRain);
+  window.localStorage.setItem("skyWatchShowSun", String(state.showSun));
+  window.localStorage.setItem("skyWatchShowTides", String(state.showTides));
+  window.localStorage.setItem("skyWatchShowRain", String(state.showRain));
+  window.localStorage.setItem("skyWatchShowNews", String(state.showNews));
+  window.localStorage.setItem("skyWatchShowBitcoin", String(state.showBitcoin));
+  if (state.showSun) updateSolarInfo(state.userPosition);
+  else renderSolar();
+  renderTides();
+  renderTicker();
+}
+
+function updateInfoSettings() {
+  state.showSun = elements.showSun?.checked !== false;
+  state.showTides = elements.showTides?.checked === true;
+  state.showRain = elements.showRain?.checked !== false;
+  state.showNews = elements.showNews?.checked !== false;
+  state.showBitcoin = elements.showBitcoin?.checked !== false;
+  applyInfoSettings();
+}
+
 function applyDisplayPreferences() {
   const settingsWereOpen = state.displayMode && !document.body.classList.contains("kiosk-mode");
   if (state.nightScheduleEnabled) state.nightMode = scheduledNightActive();
@@ -2690,6 +2962,8 @@ function applyDisplayPreferences() {
   window.localStorage.setItem("skyWatchNightStart", state.nightStart);
   window.localStorage.setItem("skyWatchNightEnd", state.nightEnd);
   window.localStorage.setItem("skyWatchDisplayPreset", state.displayPreset || "wall");
+  applyWatchSettings();
+  applyInfoSettings();
   if (state.displayMode) requestWakeLock();
   else releaseWakeLock();
   updateBurnInShift();
@@ -2796,7 +3070,7 @@ function playChime() {
 }
 
 function playDeploymentTone(activeKey) {
-  if (!state.chimeEnabled || !state.audioContext || quietHoursActive()) return;
+  if (!state.deploymentToneEnabled || !state.chimeEnabled || !state.audioContext || quietHoursActive()) return;
   const toneKey = `deployed:${activeKey}`;
   if (state.deploymentToneKeys.has(toneKey)) return;
   state.deploymentToneKeys.add(toneKey);
@@ -2995,8 +3269,8 @@ function drawRadar() {
     const history = state.trackHistory.get(aircraftKey(aircraft)) || [];
     if (!current || history.length < 2 || (!aircraft.specialReason && aircraft !== tracked)) continue;
     ctx.save();
-    ctx.strokeStyle = aircraft.specialReason ? "rgba(240, 189, 97, 0.72)" : "rgba(124, 202, 215, 0.46)";
-    ctx.lineWidth = aircraft.specialReason ? 3 : 2;
+    ctx.strokeStyle = aircraft.specialReason ? "rgba(240, 189, 97, 0.72)" : aircraft.skybus ? "rgba(83, 185, 255, 0.62)" : "rgba(124, 202, 215, 0.46)";
+    ctx.lineWidth = aircraft.specialReason || aircraft.skybus ? 3 : 2;
     ctx.setLineDash([5, 6]);
     ctx.beginPath();
     history.slice(-5).forEach((point, index) => {
@@ -3016,16 +3290,16 @@ function drawRadar() {
   for (const aircraft of state.filtered) {
     const current = trackedPositions.get(aircraftKey(aircraft));
     if (!current) continue;
-    const color = aircraft.specialReason ? "#f0bd61" : aircraft.altitude === "ground" ? "#f0bd61" : "#7ccad7";
+    const color = aircraft.specialReason ? "#f0bd61" : aircraft.skybus ? "#53b9ff" : aircraft.altitude === "ground" ? "#f0bd61" : "#7ccad7";
     drawPlane(ctx, current.x, current.y, aircraft.heading || aircraft.bearing, color);
     const selected = aircraftKey(aircraft) === state.selectedAircraftKey;
-    const label = aircraft.specialReason ? aircraft.specialReason.replace("Air ambulance", "AIR AMB") : aircraft.flight;
+    const label = aircraft.specialReason ? aircraft.specialReason.replace("Air ambulance", "AIR AMB") : aircraft.skybus ? "SKYBUS" : aircraft.flight;
     ctx.save();
-    ctx.font = `${selected || aircraft.specialReason ? 12 : 10}px "Share Tech Mono", monospace`;
+    ctx.font = `${selected || aircraft.specialReason || aircraft.skybus ? 12 : 10}px "Share Tech Mono", monospace`;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.fillStyle = selected || aircraft.specialReason ? "rgba(255, 209, 92, 0.96)" : "rgba(215, 255, 226, 0.72)";
-    ctx.shadowColor = selected || aircraft.specialReason ? "rgba(255, 209, 92, 0.5)" : "rgba(61, 255, 127, 0.28)";
+    ctx.fillStyle = selected || aircraft.specialReason ? "rgba(255, 209, 92, 0.96)" : aircraft.skybus ? "rgba(83, 185, 255, 0.92)" : "rgba(215, 255, 226, 0.72)";
+    ctx.shadowColor = selected || aircraft.specialReason ? "rgba(255, 209, 92, 0.5)" : aircraft.skybus ? "rgba(83, 185, 255, 0.42)" : "rgba(61, 255, 127, 0.28)";
     ctx.shadowBlur = 8;
     ctx.fillText(String(label || "").slice(0, 10).toUpperCase(), current.x, current.y + 15);
     ctx.restore();
@@ -3199,6 +3473,7 @@ elements.refresh.addEventListener("click", () => {
       state.locationMode = `saved home · ${label}`;
       setMessage("Base position saved on this device.", true);
     }
+    updateSolarInfo(state.userPosition);
   }
   refreshAircraft();
 });
@@ -3212,6 +3487,29 @@ elements.emergencyNightChime.addEventListener("change", updateNightControls);
 elements.nightStart.addEventListener("change", updateNightControls);
 elements.nightEnd.addEventListener("change", updateNightControls);
 elements.displayPreset?.addEventListener("change", updateDisplayPreset);
+elements.deploymentTone?.addEventListener("change", updateWatchSettings);
+elements.nearbyTone?.addEventListener("change", updateWatchSettings);
+elements.airAmbulanceWatchToggle?.addEventListener("change", updateWatchSettings);
+elements.coastguardWatchToggle?.addEventListener("change", updateWatchSettings);
+elements.militaryWatchToggle?.addEventListener("change", updateWatchSettings);
+elements.showSun?.addEventListener("change", updateInfoSettings);
+elements.showTides?.addEventListener("change", updateInfoSettings);
+elements.showRain?.addEventListener("change", updateInfoSettings);
+elements.showNews?.addEventListener("change", updateInfoSettings);
+elements.showBitcoin?.addEventListener("change", updateInfoSettings);
+elements.clearDeploymentLog?.addEventListener("click", () => {
+  state.airAmbulanceDeployments = [];
+  window.localStorage.removeItem("skyWatchAirAmbulanceDeployments");
+  renderAirAmbulanceDeployments();
+  setMessage("Air Ambulance deployment log cleared.", true);
+});
+elements.resetSkyWatch?.addEventListener("click", () => {
+  if (!window.confirm("Reset Sky Watch saved location, settings and local logs on this device?")) return;
+  for (const key of Object.keys(window.localStorage)) {
+    if (key.startsWith("skyWatch") || key.startsWith("planesNearby")) window.localStorage.removeItem(key);
+  }
+  window.location.href = window.location.pathname;
+});
 elements.chime.addEventListener("click", toggleChime);
 elements.testAlert.addEventListener("click", testAirAmbulanceAlert);
 elements.airAmbulanceDeploymentsTile?.addEventListener("click", showAirAmbulanceDeploymentLog);
@@ -3275,6 +3573,7 @@ if (!initialPosition) {
 } else {
   hideLocationSetup();
   setMessage(launchPosition ? `${initialPosition.label} active for this session.` : "Base station restored from this device.", true);
+  updateSolarInfo(state.userPosition);
   refreshAircraft();
   fetchBitcoin();
   fetchNews();
