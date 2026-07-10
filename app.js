@@ -75,6 +75,7 @@ const elements = {
   airAmbulanceWatchText: document.querySelector("#airAmbulanceWatchText"),
   airAmbulanceDeploymentsTile: document.querySelector("#airAmbulanceDeploymentsTile"),
   airAmbulanceDeploymentCount: document.querySelector("#airAmbulanceDeploymentCount"),
+  airAmbulanceDeploymentStatus: document.querySelector("#airAmbulanceDeploymentStatus"),
   militaryLogCount: document.querySelector("#militaryLogCount"),
   militaryLogText: document.querySelector("#militaryLogText"),
   airAmbulanceAlert: document.querySelector("#airAmbulanceAlert"),
@@ -182,6 +183,7 @@ const storedDisplayMode =
       ? Boolean(bootPosition)
       : storedDisplayModePreference !== "false";
 const storedNightMode = window.localStorage.getItem("skyWatchNightMode") === "true";
+const storedChime = window.localStorage.getItem("skyWatchChime") === "true";
 const storedNightDim = window.localStorage.getItem("skyWatchNightDim") || "0.2";
 const storedNightSchedule = window.localStorage.getItem("skyWatchNightSchedule") === "true";
 const storedEmergencyNightChime = window.localStorage.getItem("skyWatchEmergencyNightChime") === "true";
@@ -258,7 +260,7 @@ let state = {
   lastRefreshAttemptAt: null,
   feedError: "",
   refreshFailures: 0,
-  chimeEnabled: false,
+  chimeEnabled: storedChime,
   chimedAircraft: new Set(),
   audioContext: null,
   deploymentToneKeys: loadStringSet("skyWatchDeploymentToneKeys"),
@@ -326,11 +328,14 @@ let state = {
   news: [],
   newsUpdatedAt: null,
   newsTimer: null,
+  deploymentsTimer: null,
   autoCollapseTimer: null,
   controlsHideTimer: null,
   feedMode: liveServerAvailable ? "live server" : "browser direct",
   locationMode: launchPosition ? launchPosition.mode : savedPosition ? "saved home" : "location not set",
   homeLabel: bootPosition?.label || "",
+  deploymentSummary: null,
+  deploymentSummaryError: "",
 };
 
 const demoAircraft = [
@@ -913,20 +918,46 @@ function updateAirAmbulanceDeployments() {
 
   state.activeDeploymentKeys = nowActive;
   saveAirAmbulanceDeployments();
+  renderAirAmbulanceDeployments();
 }
 
-function showAirAmbulanceDeploymentLog() {
+function localDeploymentLogText() {
   state.airAmbulanceDeployments = pruneAirAmbulanceDeployments(state.airAmbulanceDeployments);
   if (!state.airAmbulanceDeployments.length) {
-    window.alert("Air Ambulance Deployments — 24h\n\nNo Cornwall Air Ambulance deployments detected in the last 24 hours.");
-    return;
+    return "No Cornwall Air Ambulance deployments detected in the last 24 hours.";
   }
   const lines = state.airAmbulanceDeployments.slice(0, 12).map((entry) => {
     const aircraft = [entry.flight, entry.registration].filter(Boolean).join(" / ") || "Cornwall Air Ambulance";
     const route = entry.area ? `to/current area: ${entry.area}` : "Route unavailable";
     return `${formatHour(entry.time)} · ${aircraft}\nfrom: ${entry.from || "Newquay base"}\n${route}`;
   });
-  window.alert(`Air Ambulance Deployments — 24h\n\n${lines.join("\n\n")}`);
+  return lines.join("\n\n");
+}
+
+async function showAirAmbulanceDeploymentLog() {
+  if (liveServerAvailable) {
+    try {
+      const response = await fetch("/api/deployments", { cache: "no-store" });
+      if (response.ok) {
+        const payload = await response.json();
+        if (payload.central && Array.isArray(payload.items)) {
+          const lines = payload.items.length
+            ? payload.items.map((entry) => {
+                const aircraft = [entry.callsign, entry.registration].filter(Boolean).join(" / ") || "Cornwall Air Ambulance";
+                const seen = entry.firstSeenAt ? formatHour(entry.firstSeenAt) : "Time unavailable";
+                const area = entry.area || "Route unavailable";
+                return `${seen} · ${aircraft}\nfrom: ${entry.from || "Newquay base"}\nto/current area: ${area}`;
+              })
+            : ["No central deployments detected in the last 24 hours."];
+          window.alert(`Air Ambulance Deployments — 24h\nCentral tracker live\n\n${lines.join("\n\n")}`);
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+  window.alert(`Air Ambulance Deployments — 24h\nCentral tracker unavailable — using this device only\n\n${localDeploymentLogText()}`);
 }
 
 function updateRescueLog() {
@@ -2474,6 +2505,7 @@ function renderTable() {
     tr.style.setProperty("--logo-b", branding.colors[1]);
     tr.classList.toggle("special-row", Boolean(aircraft.specialReason));
     tr.classList.toggle("skybus-row", Boolean(aircraft.skybus));
+    tr.classList.add(`${aircraftTypeClass(aircraft)}-row`);
     tr.innerHTML = `
       <td>${airlineLogoMarkup(aircraft)}</td>
       <td><span class="flight">${aircraft.flight}</span><span class="subtle">${aircraft.airAmbulanceStatus || aircraft.specialReason || (aircraft.skybus ? "Skybus island service" : aircraft.status)}</span></td>
@@ -2553,7 +2585,38 @@ function renderRescueLog() {
 function renderAirAmbulanceDeployments() {
   if (!elements.airAmbulanceDeploymentCount) return;
   state.airAmbulanceDeployments = pruneAirAmbulanceDeployments(state.airAmbulanceDeployments);
+  if (state.deploymentSummary?.central) {
+    elements.airAmbulanceDeploymentCount.textContent = Number(state.deploymentSummary.count24h || 0).toLocaleString();
+    if (elements.airAmbulanceDeploymentStatus) elements.airAmbulanceDeploymentStatus.textContent = "Central tracker live";
+    return;
+  }
   elements.airAmbulanceDeploymentCount.textContent = state.airAmbulanceDeployments.length.toLocaleString();
+  if (elements.airAmbulanceDeploymentStatus) {
+    elements.airAmbulanceDeploymentStatus.textContent = state.deploymentSummaryError
+      ? "Central tracker unavailable — this device only"
+      : "Air Ambulance Deployments — 24h";
+  }
+}
+
+async function fetchDeploymentSummary() {
+  if (!liveServerAvailable) {
+    state.deploymentSummary = null;
+    state.deploymentSummaryError = "Central deployment tracker not configured";
+    renderAirAmbulanceDeployments();
+    return;
+  }
+  try {
+    const response = await fetch("/api/deployments/summary", { cache: "no-store" });
+    if (!response.ok) throw new Error(`Deployment summary returned ${response.status}`);
+    const payload = await response.json();
+    state.deploymentSummary = payload;
+    state.deploymentSummaryError = payload.central ? "" : payload.status || "Central deployment tracker not configured";
+  } catch (error) {
+    console.warn(error);
+    state.deploymentSummary = null;
+    state.deploymentSummaryError = "Central tracker unavailable";
+  }
+  renderAirAmbulanceDeployments();
 }
 
 function renderStats() {
@@ -2807,17 +2870,30 @@ function quietHoursActive() {
 }
 
 function removeTestAlertAircraft() {
+  window.clearTimeout(state.testAlertClearTimer);
+  state.testAlertClearTimer = null;
+  state.testAlertUntil = 0;
   state.testAlertAircraft = null;
   state.aircraft = state.aircraft.filter((aircraft) => aircraft.id !== state.testAircraftId);
   state.filtered = state.filtered.filter((aircraft) => aircraft.id !== state.testAircraftId);
   state.trackHistory.delete(state.testAircraftId);
   if (state.selectedAircraftKey === state.testAircraftId) state.selectedAircraftKey = "";
-  if (Date.now() >= state.testAlertUntil) {
+  const realEmergency = activeCloseRescueAircraft();
+  if (!realEmergency) {
     document.body.classList.remove("emergency-focus");
     elements.airAmbulanceAlert.hidden = true;
     elements.airAmbulanceAlert.classList.remove("active");
+    elements.airAmbulanceAlertTitle.textContent = "Air ambulance alert";
+    elements.airAmbulanceAlertText.textContent = "Monitoring Cornwall Air Ambulance";
+    if (state.radarExpanded) setRadarExpanded(false, true);
   }
   applyFilter();
+  renderAirAmbulanceAlert();
+  renderAirAmbulanceWatch();
+  updateMap();
+  drawRadar();
+  renderTicker();
+  console.info("Sky Watch test alert cleared");
 }
 
 function createTestAirAmbulanceTrack() {
@@ -2867,6 +2943,7 @@ function testAirAmbulanceAlert() {
   if (!state.userPosition) {
     setFallbackPreview("Demo base loaded for test alert.");
   }
+  removeTestAlertAircraft();
   state.testAlertUntil = Date.now() + 45000;
   const testAircraft = createTestAirAmbulanceTrack();
   if (testAircraft) {
@@ -3008,6 +3085,7 @@ function applyDisplayPreferences() {
   elements.nightMode.innerHTML = state.nightMode
     ? '<span aria-hidden="true">◐</span> Night dim'
     : '<span aria-hidden="true">◐</span> Night';
+  renderChimeButton();
   window.localStorage.setItem("skyWatchDisplayMode", String(state.displayMode));
   if (savedPosition) window.localStorage.setItem("skyWatchDisplayModeDefaulted", "true");
   window.localStorage.setItem("skyWatchNightMode", String(state.nightMode));
@@ -3093,18 +3171,23 @@ function updateDisplayPreset() {
 
 function toggleChime() {
   state.chimeEnabled = !state.chimeEnabled;
-  elements.chime.classList.toggle("armed", state.chimeEnabled);
-  elements.chime.innerHTML = state.chimeEnabled
-    ? quietHoursActive() && !state.emergencyNightChimeEnabled
-      ? '<span aria-hidden="true">♪</span> Quiet hours: chime muted'
-      : '<span aria-hidden="true">♪</span> Chime on'
-    : '<span aria-hidden="true">♪</span> Chime off';
+  renderChimeButton();
+  window.localStorage.setItem("skyWatchChime", String(state.chimeEnabled));
   if (state.chimeEnabled && !state.audioContext) {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     if (AudioContext) state.audioContext = new AudioContext();
   }
   if (state.audioContext?.state === "suspended") state.audioContext.resume();
   if (state.chimeEnabled) alertForSpecialAircraft();
+}
+
+function renderChimeButton() {
+  elements.chime.classList.toggle("armed", state.chimeEnabled);
+  elements.chime.innerHTML = state.chimeEnabled
+    ? quietHoursActive() && !state.emergencyNightChimeEnabled
+      ? '<span aria-hidden="true">♪</span> Quiet hours: chime muted'
+      : '<span aria-hidden="true">♪</span> Chime on'
+    : '<span aria-hidden="true">♪</span> Chime off';
 }
 
 function playChime() {
@@ -3662,6 +3745,7 @@ renderStats();
 updateDateTime();
 renderTemperature();
 renderTicker();
+fetchDeploymentSummary();
 registerServiceWorker();
 animate();
 refreshMapSize(300);
@@ -3682,6 +3766,7 @@ state.refreshTimer = window.setInterval(refreshAircraft, 60000);
 state.weatherTimer = window.setInterval(() => fetchWeather(state.userPosition), 30 * 60 * 1000);
 state.bitcoinTimer = window.setInterval(fetchBitcoin, 5 * 60 * 1000);
 state.newsTimer = window.setInterval(fetchNews, 5 * 60 * 1000);
+state.deploymentsTimer = window.setInterval(fetchDeploymentSummary, 60 * 1000);
 state.updateClock = window.setInterval(renderStats, 1000);
 state.dateClock = window.setInterval(updateDateTime, 1000);
 state.staleTimer = window.setInterval(renderFeedStatus, 30000);
