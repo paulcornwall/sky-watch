@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display42" />
+    <link rel="stylesheet" href="./styles.css?v=display43" />
   </head>
   <body class="kiosk-mode setup-active">
     <main class="app-shell">
@@ -191,6 +191,10 @@
           <span class="metric" id="airAmbulanceWatch">Standby</span>
           <span id="airAmbulanceWatchText">rescue watch</span>
         </div>
+        <button id="airAmbulanceDeploymentsTile" class="status-tile-button" type="button" title="Show Cornwall Air Ambulance deployments seen in the last 24 hours">
+          <span class="metric" id="airAmbulanceDeploymentCount">0</span>
+          <span>Air Ambulance Deployments — 24h</span>
+        </button>
         <div>
           <span class="metric" id="militaryLogCount">0</span>
           <span id="militaryLogText">military within 5 mi</span>
@@ -287,6 +291,7 @@
             <strong id="mapRangeLabel">50 mi radius</strong>
             <button id="expandRadarButton" type="button">Expand</button>
           </div>
+          <div id="mapTileWarning" class="map-tile-warning" hidden>Map tiles unavailable — radar fallback active</div>
           <div id="radarSelection" class="radar-selection" hidden>
             <strong>Track selected</strong>
             <span>Tap aircraft for details</span>
@@ -396,6 +401,6 @@
     </section>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display42" defer></script>
+    <script src="./app.js?v=display43" defer></script>
   </body>
 </html>

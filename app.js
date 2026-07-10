@@ -56,6 +56,8 @@ const elements = {
   specialCount: document.querySelector("#specialCount"),
   airAmbulanceWatch: document.querySelector("#airAmbulanceWatch"),
   airAmbulanceWatchText: document.querySelector("#airAmbulanceWatchText"),
+  airAmbulanceDeploymentsTile: document.querySelector("#airAmbulanceDeploymentsTile"),
+  airAmbulanceDeploymentCount: document.querySelector("#airAmbulanceDeploymentCount"),
   militaryLogCount: document.querySelector("#militaryLogCount"),
   militaryLogText: document.querySelector("#militaryLogText"),
   airAmbulanceAlert: document.querySelector("#airAmbulanceAlert"),
@@ -66,6 +68,7 @@ const elements = {
   map: document.querySelector("#mapView"),
   mapLabel: document.querySelector("#mapLabel"),
   mapRangeLabel: document.querySelector("#mapRangeLabel"),
+  mapTileWarning: document.querySelector("#mapTileWarning"),
   radarSelection: document.querySelector("#radarSelection"),
   canvas: document.querySelector("#radarCanvas"),
   spotlightLogo: document.querySelector("#spotlightLogo"),
@@ -152,7 +155,9 @@ const bootPosition = launchPosition || savedPosition;
 const storedDisplayModePreference = window.localStorage.getItem("skyWatchDisplayMode");
 const displayModeDefaulted = window.localStorage.getItem("skyWatchDisplayModeDefaulted") === "true";
 const storedDisplayMode =
-  bootPosition && !displayModeDefaulted
+  launchPosition
+    ? true
+    : bootPosition && !displayModeDefaulted
     ? true
     : storedDisplayModePreference == null
       ? Boolean(bootPosition)
@@ -170,6 +175,16 @@ const storedAircraftCategory = window.localStorage.getItem("skyWatchAircraftCate
 const storedDisplayPreset = window.localStorage.getItem("skyWatchDisplayPreset") || "wall";
 const airAmbulancePhoto = "./assets/cornwall-air-ambulance-photo.png";
 const logoCache = new Map();
+
+function loadStringSet(key) {
+  try {
+    const entries = JSON.parse(window.localStorage.getItem(key) || "[]");
+    return new Set(Array.isArray(entries) ? entries.map(String) : []);
+  } catch (error) {
+    console.warn(error);
+    return new Set();
+  }
+}
 
 function applyTestReset() {
   const params = new URLSearchParams(window.location.search);
@@ -204,10 +219,12 @@ let state = {
   chimeEnabled: false,
   chimedAircraft: new Set(),
   audioContext: null,
+  deploymentToneKeys: loadStringSet("skyWatchDeploymentToneKeys"),
   closestToday: null,
   lowestToday: null,
   map: null,
   mapReady: false,
+  mapTileError: false,
   homeMarker: null,
   rangeRings: [],
   planeMarkers: [],
@@ -225,6 +242,8 @@ let state = {
   testAlertClearTimer: null,
   militaryLog: loadMilitaryLog(),
   rescueLog: loadRescueLog(),
+  airAmbulanceDeployments: loadAirAmbulanceDeployments(),
+  activeDeploymentKeys: new Set(),
   routeCache: new Map(),
   radarExpanded: false,
   suppressEmergencyAutoExpandUntil: 0,
@@ -337,6 +356,41 @@ const airAmbulanceWaypoints = {
   derriford: { label: "Derriford Hospital", detail: "Plymouth", lat: 50.4169, lon: -4.1136 },
   base: { label: "Newquay base", detail: "Cornwall Air Ambulance base", lat: 50.4406, lon: -4.9954 },
 };
+
+const airAmbulanceIdentifiers = [
+  "G-CRWL",
+  "G-CNLL",
+  "HLE01",
+  "HLE1",
+  "HLE20",
+  "HLE20Z",
+  "HELIMED01",
+  "HELIMED1",
+  "CAAT07",
+  "407933",
+  "40812C",
+];
+
+const coastguardIdentifiers = [
+  "RESCUE924",
+  "RESCUE 924",
+  "R924",
+  "COASTGUARD924",
+  "COASTGUARD 924",
+  "CG924",
+  "SRD924",
+  "SRD 924",
+  "SRG924",
+  "G-MCGF",
+  "G-MCGI",
+  "G-MCGY",
+  "G-MCGZ",
+  "SRD203",
+  "SRD 203",
+  "CG203",
+  "G-HMGA",
+  "G-HMGC",
+];
 
 const localPlaces = [
   { name: "Newquay", lat: 50.4155, lon: -5.0737 },
@@ -715,6 +769,83 @@ function saveRescueLog() {
   } catch (error) {
     console.warn(error);
   }
+}
+
+function loadAirAmbulanceDeployments() {
+  try {
+    const entries = JSON.parse(window.localStorage.getItem("skyWatchAirAmbulanceDeployments") || "[]");
+    if (Array.isArray(entries)) return pruneAirAmbulanceDeployments(entries);
+  } catch (error) {
+    console.warn(error);
+  }
+  return [];
+}
+
+function pruneAirAmbulanceDeployments(entries) {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  return entries.filter((entry) => Number(entry.time) >= cutoff);
+}
+
+function saveAirAmbulanceDeployments() {
+  try {
+    window.localStorage.setItem("skyWatchAirAmbulanceDeployments", JSON.stringify(state.airAmbulanceDeployments));
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+function deploymentKeyForAircraft(aircraft) {
+  return String(aircraft.registration || aircraft.flight || aircraft.id || aircraft.hex || "air-ambulance").toUpperCase();
+}
+
+function isAirAmbulanceDeployed(aircraft) {
+  if (!isAirAmbulance(aircraft) || !Number.isFinite(aircraft.lat) || !Number.isFinite(aircraft.lon)) return false;
+  return distanceFromCoords({ lat: aircraft.lat, lon: aircraft.lon }, airAmbulanceWaypoints.base) > 1;
+}
+
+function updateAirAmbulanceDeployments() {
+  state.airAmbulanceDeployments = pruneAirAmbulanceDeployments(state.airAmbulanceDeployments);
+  const deployedAircraft = state.aircraft.filter((aircraft) => aircraft.id !== state.testAircraftId).filter(isAirAmbulanceDeployed);
+  const nowActive = new Set(deployedAircraft.map(deploymentKeyForAircraft));
+
+  for (const aircraft of deployedAircraft) {
+    const activeKey = deploymentKeyForAircraft(aircraft);
+    if (state.activeDeploymentKeys.has(activeKey)) continue;
+    const recentDuplicate = state.airAmbulanceDeployments.some(
+      (entry) => entry.activeKey === activeKey && Date.now() - Number(entry.time) < 2 * 60 * 60 * 1000,
+    );
+    if (recentDuplicate) continue;
+    const place = nearestPlace(aircraft.lat, aircraft.lon);
+    state.airAmbulanceDeployments.unshift({
+      key: `${activeKey}:${Date.now()}`,
+      activeKey,
+      time: Date.now(),
+      flight: aircraft.flight,
+      registration: aircraft.registration,
+      from: "Newquay base",
+      area: place?.name || "",
+      distanceFromBase: distanceFromCoords({ lat: aircraft.lat, lon: aircraft.lon }, airAmbulanceWaypoints.base),
+      status: aircraft.airAmbulanceStatus || placePhrase(aircraft),
+    });
+    playDeploymentTone(activeKey);
+  }
+
+  state.activeDeploymentKeys = nowActive;
+  saveAirAmbulanceDeployments();
+}
+
+function showAirAmbulanceDeploymentLog() {
+  state.airAmbulanceDeployments = pruneAirAmbulanceDeployments(state.airAmbulanceDeployments);
+  if (!state.airAmbulanceDeployments.length) {
+    window.alert("Air Ambulance Deployments — 24h\n\nNo Cornwall Air Ambulance deployments detected in the last 24 hours.");
+    return;
+  }
+  const lines = state.airAmbulanceDeployments.slice(0, 12).map((entry) => {
+    const aircraft = [entry.flight, entry.registration].filter(Boolean).join(" / ") || "Cornwall Air Ambulance";
+    const route = entry.area ? `to/current area: ${entry.area}` : "Route unavailable";
+    return `${formatHour(entry.time)} · ${aircraft}\nfrom: ${entry.from || "Newquay base"}\n${route}`;
+  });
+  window.alert(`Air Ambulance Deployments — 24h\n\n${lines.join("\n\n")}`);
 }
 
 function updateRescueLog() {
@@ -1268,11 +1399,13 @@ function routeTimeLabel(scheduled, estimated, fallbackLabel) {
 }
 
 function routeCellMarkup(name, code = "", time = "") {
-  const routeName = String(name || "").trim();
+  const rawName = String(name || "").trim();
+  const routeName = /lookup pending|data needed|unknown/i.test(rawName) ? "" : rawName;
   const routeCode = String(code || "").trim().toUpperCase();
+  if (!routeName && !routeCode) return `<span class="route-airport unavailable"><span>Route unavailable</span></span>`;
   return `
     <span class="route-airport">
-      <span>${escapeHtml(routeName || "Route lookup pending")}</span>
+      <span>${escapeHtml(routeName)}</span>
       ${routeCode ? `<small>${escapeHtml(routeCode)}</small>` : ""}
       ${time ? `<small class="route-time">${escapeHtml(time)}</small>` : ""}
     </span>
@@ -1315,6 +1448,39 @@ function isAirAmbulance(aircraft) {
   return specialAircraftReason(aircraft) === "Air ambulance";
 }
 
+function aircraftIdentityText(aircraft) {
+  return [
+    aircraft.flight,
+    aircraft.callsign,
+    aircraft.registration,
+    aircraft.r,
+    aircraft.hex,
+    aircraft.id,
+    aircraft.operator,
+    aircraft.airline,
+    aircraft.aircraftType,
+    aircraft.type,
+    routeLabel(aircraft.from, aircraft.fromCode),
+    routeLabel(aircraft.to, aircraft.toCode),
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function compactIdentity(value) {
+  return String(value || "").replace(/[^A-Z0-9]/gi, "").toUpperCase();
+}
+
+function matchesIdentifier(aircraft, identifiers) {
+  const identity = aircraftIdentityText(aircraft);
+  const compact = compactIdentity(identity);
+  return identifiers.some((identifier) => {
+    const raw = String(identifier).toUpperCase();
+    return identity.toUpperCase().includes(raw) || compact.includes(compactIdentity(raw));
+  });
+}
+
 function nearestPlace(lat, lon) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return { name: "unknown area", distance: Number.NaN };
   return localPlaces
@@ -1348,15 +1514,18 @@ function airAmbulanceTrackingStatus(aircraft) {
   if (!aircraft || !isAirAmbulance(aircraft)) return "";
   const place = placePhrase(aircraft);
   const userDistance = Number(aircraft.distance);
+  const baseDistance = distanceFromCoords({ lat: aircraft.lat, lon: aircraft.lon }, airAmbulanceWaypoints.base);
 
   if (isLandedAircraft(aircraft)) {
     const nearest = nearestPlace(aircraft.lat, aircraft.lon);
     return `Air Ambulance landed ${nearest?.name ? `near ${nearest.name}` : "near last known position"}`;
   }
 
+  if (Number.isFinite(userDistance) && userDistance <= 2) return `Close - ${place}`;
   if (Number.isFinite(userDistance) && userDistance <= 5) {
-    return `Air Ambulance within 5 miles - ${place}`;
+    return `Nearby - ${place}`;
   }
+  if (Number.isFinite(baseDistance) && baseDistance > 1) return `Deployed - ${place}`;
 
   if (state.userPosition && headingToTarget(aircraft, state.userPosition, 44) && Number.isFinite(userDistance) && userDistance <= 30) {
     return `Heading your way - ${place}`;
@@ -1378,30 +1547,23 @@ function airAmbulanceTrackingStatus(aircraft) {
 }
 
 function specialAircraftReason(aircraft) {
-  const text = [
-    aircraft.flight,
-    aircraft.registration,
-    aircraft.id,
-    aircraft.airline,
-    aircraft.aircraftType,
-    routeLabel(aircraft.from, aircraft.fromCode),
-    routeLabel(aircraft.to, aircraft.toCode),
-  ]
-    .join(" ")
-    .toLowerCase();
+  const text = aircraftIdentityText(aircraft).toLowerCase();
   const flight = String(aircraft.flight || "").trim().toUpperCase();
   if (
+    matchesIdentifier(aircraft, airAmbulanceIdentifiers) ||
     text.includes("cornwall air ambulance") ||
     text.includes("air ambulance") ||
     text.includes("helimed") ||
-    /^HLE\d|^HELIMED|^G-CRWL|^G-CNLL|^G-CIOS/.test(flight)
+    /^HLE\d|^HELIMED|^G-CRWL|^G-CNLL|^G-CIOS|^CAAT07/.test(flight)
   ) {
     return "Air ambulance";
   }
   if (
+    matchesIdentifier(aircraft, coastguardIdentifiers) ||
     text.includes("coastguard") ||
     text.includes("rescue") ||
     text.includes("search and rescue") ||
+    /\bsar\b/.test(text) ||
     text.includes("maritime and coastguard") ||
     text.includes("hm coastguard") ||
     /\bSAR\b/i.test(text) ||
@@ -1481,6 +1643,9 @@ function normalizeAircraft(item, origin) {
   const destinationRoute = item.to || item.destination;
   return decorateAircraft({
     flight,
+    callsign: item.callsign,
+    hex: item.hex || item.icao,
+    operator: item.ownOp || item.operator,
     airline: airlineFromFlight(flight, item.ownOp || item.operator || item.airline),
     aircraftType: formatAircraftType(item.t || item.type || item.aircraft_type),
     altitude: item.alt_baro ?? item.alt_geom ?? item.altitude,
@@ -1500,6 +1665,7 @@ function normalizeAircraft(item, origin) {
     lon,
     id: item.hex || item.icao || flight,
     registration: item.r || item.registration,
+    r: item.r,
     seenAt: Date.now(),
   });
 }
@@ -1626,6 +1792,10 @@ function routeNeedsLookup(aircraft) {
   return [aircraft.from, aircraft.to].some((value) => /lookup pending|data needed|unknown/i.test(String(value || "")));
 }
 
+function routeAvailable(aircraft) {
+  return !routeNeedsLookup(aircraft) && Boolean(routeLabel(aircraft.from, aircraft.fromCode) || routeLabel(aircraft.to, aircraft.toCode));
+}
+
 function routeLookupCandidate(aircraft) {
   const callsign = String(aircraft.flight || "").trim().toUpperCase();
   if (!callsign || /unknown/i.test(callsign)) return false;
@@ -1681,6 +1851,14 @@ function setMessage(text, visible = true) {
   elements.message.classList.toggle("show", visible);
 }
 
+function refreshMapSize(delay = 0) {
+  window.setTimeout(() => {
+    state.map?.invalidateSize();
+    updateMap();
+    drawRadar();
+  }, delay);
+}
+
 function initMap() {
   if (state.map || !window.L || !elements.map || !state.userPosition) return;
   try {
@@ -1695,16 +1873,37 @@ function initMap() {
       tap: true,
     }).setView([state.userPosition.lat, state.userPosition.lon], 8);
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    const tileLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 18,
       attribution: "&copy; OpenStreetMap",
-    }).addTo(state.map);
+    });
+    tileLayer.on("tileerror", () => {
+      state.mapTileError = true;
+      state.mapReady = false;
+      if (elements.mapTileWarning) elements.mapTileWarning.hidden = false;
+      elements.mapLabel.textContent = "Radar fallback";
+      drawRadar();
+    });
+    tileLayer.on("tileload", () => {
+      if (!state.mapTileError) return;
+      state.mapTileError = false;
+      state.mapReady = true;
+      if (elements.mapTileWarning) elements.mapTileWarning.hidden = true;
+      elements.mapLabel.textContent = "Live sector map";
+      drawRadar();
+    });
+    tileLayer.addTo(state.map);
 
     state.mapReady = true;
+    state.mapTileError = false;
+    if (elements.mapTileWarning) elements.mapTileWarning.hidden = true;
     elements.mapLabel.textContent = "Live sector map";
+    refreshMapSize(80);
   } catch (error) {
     console.warn(error);
     state.mapReady = false;
+    state.mapTileError = true;
+    if (elements.mapTileWarning) elements.mapTileWarning.hidden = false;
     elements.mapLabel.textContent = "Radar fallback";
   }
 }
@@ -1842,11 +2041,7 @@ function setRadarExpanded(expanded, userInitiated = false) {
       : state.radarExpanded
         ? `${Math.min(Number(elements.radius.value) || 50, 25)} mi expanded`
       : elements.mapRangeLabel.textContent;
-  window.setTimeout(() => {
-    state.map?.invalidateSize();
-    updateMap();
-    drawRadar();
-  }, 0);
+  refreshMapSize(0);
 }
 
 function maybeExpandAirAmbulanceMap() {
@@ -2070,7 +2265,7 @@ function renderNearestList() {
       const branding = brandingForFlight(aircraft.flight);
       const status = aircraft.airAmbulanceStatus || aircraft.specialReason || aircraft.status;
       const route = routeNeedsLookup(aircraft)
-        ? "Route not available"
+        ? "Route unavailable"
         : `${routeLabel(aircraft.from, aircraft.fromCode)} -> ${routeLabel(aircraft.to, aircraft.toCode)}`;
       return `
         <button type="button" class="nearest-row${aircraft.specialReason ? " special" : ""}" data-aircraft-key="${escapeHtml(aircraftKey(aircraft))}" style="--logo-a:${branding.colors[0]};--logo-b:${branding.colors[1]}">
@@ -2111,6 +2306,12 @@ function renderRescueLog() {
     .join("");
 }
 
+function renderAirAmbulanceDeployments() {
+  if (!elements.airAmbulanceDeploymentCount) return;
+  state.airAmbulanceDeployments = pruneAirAmbulanceDeployments(state.airAmbulanceDeployments);
+  elements.airAmbulanceDeploymentCount.textContent = state.airAmbulanceDeployments.length.toLocaleString();
+}
+
 function renderStats() {
   elements.count.textContent = state.filtered.length.toLocaleString();
   elements.nearest.textContent = state.filtered[0] ? formatDistance(state.filtered[0].distance) : "Waiting";
@@ -2126,6 +2327,7 @@ function renderStats() {
   renderAircraftFilterButtons();
   renderNearestList();
   renderRescueLog();
+  renderAirAmbulanceDeployments();
   renderAirAmbulanceWatch();
   renderMilitaryLog();
   renderAirAmbulanceAlert();
@@ -2145,6 +2347,7 @@ function renderSpotlight() {
   const aircraft = rescue || selectedAircraft || spotlightList[state.spotlightIndex] || spotlightList[0];
   if (!aircraft) {
     elements.spotlightCard.classList.add("no-track");
+    elements.spotlightCard.classList.remove("route-unavailable", "emergency-card");
     elements.spotlightLogo.textContent = "SW";
     elements.spotlightLogo.style.setProperty("--logo-a", "#4d5b55");
     elements.spotlightLogo.style.setProperty("--logo-b", "#9fb4aa");
@@ -2165,6 +2368,7 @@ function renderSpotlight() {
 
   elements.spotlightCard.classList.remove("no-track");
   elements.spotlightCard.classList.toggle("emergency-card", Boolean(emergencyFocusAircraft() && aircraftKey(aircraft) === aircraftKey(emergencyFocusAircraft())));
+  elements.spotlightCard.classList.toggle("route-unavailable", !routeAvailable(aircraft));
   setSpotlightLogo(aircraft);
   elements.spotlightFlight.textContent = displayServiceName(aircraft);
   elements.spotlightAirline.textContent = `Callsign ${aircraft.flight}`;
@@ -2172,8 +2376,13 @@ function renderSpotlight() {
     ? aircraft.airAmbulanceStatus || `${aircraft.specialReason} · ${aircraft.status}`
     : aircraft.status;
   elements.spotlightStatus.className = `spotlight-status${aircraft.specialReason ? " special" : ""}`;
-  elements.spotlightFrom.innerHTML = routeCellMarkup(aircraft.from, aircraft.fromCode, routeTimeLabel(aircraft.scheduledDeparture, aircraft.estimatedDeparture, "Dep"));
-  elements.spotlightTo.innerHTML = routeCellMarkup(aircraft.to, aircraft.toCode, routeTimeLabel(aircraft.scheduledArrival, aircraft.estimatedArrival, "Arr"));
+  if (routeAvailable(aircraft)) {
+    elements.spotlightFrom.innerHTML = routeCellMarkup(aircraft.from, aircraft.fromCode, routeTimeLabel(aircraft.scheduledDeparture, aircraft.estimatedDeparture, "Dep"));
+    elements.spotlightTo.innerHTML = routeCellMarkup(aircraft.to, aircraft.toCode, routeTimeLabel(aircraft.scheduledArrival, aircraft.estimatedArrival, "Arr"));
+  } else {
+    elements.spotlightFrom.innerHTML = `<span class="route-airport unavailable"><span>Route unavailable</span></span>`;
+    elements.spotlightTo.textContent = "";
+  }
   elements.spotlightDistance.textContent = formatDistance(aircraft.distance);
   elements.spotlightDirection.textContent = formatDirection(aircraft.bearing);
   elements.spotlightAltitude.textContent = formatAltitude(aircraft.altitude);
@@ -2244,19 +2453,29 @@ function emergencyAlertDetails(aircraft) {
 function renderAirAmbulanceWatch() {
   const aircraft = emergencyFocusAircraft() || activeRescueAircraft();
   if (aircraft) {
-    elements.airAmbulanceWatch.textContent = aircraft.id === state.testAircraftId ? "Test active" : "Airborne";
+    const distance = Number(aircraft.distance);
+    const stateLabel = aircraft.id === state.testAircraftId
+      ? "Test active"
+      : distance <= 2
+        ? "Close"
+        : distance <= 5
+          ? "Nearby"
+          : aircraft.specialReason === "Air ambulance" && isAirAmbulanceDeployed(aircraft)
+            ? "Deployed"
+            : "Airborne";
+    elements.airAmbulanceWatch.textContent = stateLabel;
     elements.airAmbulanceWatchText.textContent = `${aircraft.specialReason} · ${aircraft.flight} · ${aircraft.airAmbulanceStatus || placePhrase(aircraft)} · ${formatDistance(aircraft.distance)}`;
     return;
   }
 
   if (state.lastAirAmbulance && Date.now() - state.lastAirAmbulance.seenAt < 15 * 60 * 1000) {
-    elements.airAmbulanceWatch.textContent = "Last seen";
-    elements.airAmbulanceWatchText.textContent = `${formatHour(state.lastAirAmbulance.seenAt)} · ${placePhrase(state.lastAirAmbulance.aircraft)}`;
+    elements.airAmbulanceWatch.textContent = "Standby";
+    elements.airAmbulanceWatchText.textContent = `Last seen ${formatHour(state.lastAirAmbulance.seenAt)} · ${placePhrase(state.lastAirAmbulance.aircraft)}`;
     return;
   }
 
   elements.airAmbulanceWatch.textContent = "Standby";
-  elements.airAmbulanceWatchText.textContent = "No air ambulance or Coastguard track detected";
+  elements.airAmbulanceWatchText.textContent = "No known aircraft deployed";
 }
 
 function renderMilitaryLog() {
@@ -2417,21 +2636,25 @@ function testAirAmbulanceAlert() {
 function toggleKiosk() {
   if (!state.displayMode) {
     document.body.classList.toggle("kiosk-mode");
+    refreshMapSize(80);
     return;
   }
   if (!document.body.classList.contains("kiosk-mode")) {
     document.body.classList.add("kiosk-mode");
+    refreshMapSize(80);
     return;
   }
   document.body.classList.remove("kiosk-mode");
   window.clearTimeout(state.controlsHideTimer);
   state.controlsHideTimer = null;
+  refreshMapSize(80);
 }
 
 function closeSettingsPanel() {
   document.body.classList.add("kiosk-mode");
   window.clearTimeout(state.controlsHideTimer);
   state.controlsHideTimer = null;
+  refreshMapSize(80);
 }
 
 function applyDisplayPreferences() {
@@ -2506,7 +2729,7 @@ async function releaseWakeLock() {
 function toggleDisplayMode() {
   state.displayMode = !state.displayMode;
   applyDisplayPreferences();
-  window.setTimeout(() => state.map?.invalidateSize(), 0);
+  refreshMapSize(80);
 }
 
 function toggleNightMode() {
@@ -2569,6 +2792,32 @@ function playChime() {
     oscillator.connect(gain).connect(state.audioContext.destination);
     oscillator.start(now + index * 0.15);
     oscillator.stop(now + index * 0.15 + 0.16);
+  }
+}
+
+function playDeploymentTone(activeKey) {
+  if (!state.chimeEnabled || !state.audioContext || quietHoursActive()) return;
+  const toneKey = `deployed:${activeKey}`;
+  if (state.deploymentToneKeys.has(toneKey)) return;
+  state.deploymentToneKeys.add(toneKey);
+  try {
+    window.localStorage.setItem("skyWatchDeploymentToneKeys", JSON.stringify([...state.deploymentToneKeys].slice(-80)));
+  } catch (error) {
+    console.warn(error);
+  }
+
+  const now = state.audioContext.currentTime;
+  for (const [index, frequency] of [660, 880].entries()) {
+    const oscillator = state.audioContext.createOscillator();
+    const gain = state.audioContext.createGain();
+    oscillator.type = "triangle";
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0, now + index * 0.18);
+    gain.gain.linearRampToValueAtTime(0.055, now + index * 0.18 + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.18 + 0.22);
+    oscillator.connect(gain).connect(state.audioContext.destination);
+    oscillator.start(now + index * 0.18);
+    oscillator.stop(now + index * 0.18 + 0.24);
   }
 }
 
@@ -2833,6 +3082,7 @@ async function refreshAircraft() {
     }
     updateMilitaryLog();
     updateRescueLog();
+    updateAirAmbulanceDeployments();
     rememberTracks(state.aircraft);
     updateHighlights();
     elements.source.textContent = `${result.source} · auto 60s`;
@@ -2964,6 +3214,7 @@ elements.nightEnd.addEventListener("change", updateNightControls);
 elements.displayPreset?.addEventListener("change", updateDisplayPreset);
 elements.chime.addEventListener("click", toggleChime);
 elements.testAlert.addEventListener("click", testAirAmbulanceAlert);
+elements.airAmbulanceDeploymentsTile?.addEventListener("click", showAirAmbulanceDeploymentLog);
 elements.radius.addEventListener("change", () => {
   window.localStorage.setItem("skyWatchRadius", elements.radius.value);
   refreshAircraft();
@@ -2979,7 +3230,7 @@ elements.nearestList?.addEventListener("click", (event) => {
   const aircraft = state.filtered.find((item) => aircraftKey(item) === row.dataset.aircraftKey);
   if (aircraft) selectAircraft(aircraft);
 });
-window.addEventListener("resize", drawRadar);
+window.addEventListener("resize", () => refreshMapSize(80));
 ["pointerdown", "keydown", "touchstart"].forEach((eventName) => window.addEventListener(eventName, markUserInput, { passive: true }));
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state.displayMode) requestWakeLock();
@@ -3015,6 +3266,7 @@ renderTemperature();
 renderTicker();
 registerServiceWorker();
 animate();
+refreshMapSize(300);
 if (!initialPosition) {
   state.displayMode = false;
   applyDisplayPreferences();
