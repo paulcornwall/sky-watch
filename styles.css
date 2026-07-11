@@ -37,7 +37,7 @@ body {
     "Share Tech Mono", "JetBrains Mono", "IBM Plex Mono", "SFMono-Regular", Consolas,
     "Liberation Mono", monospace;
   text-transform: uppercase;
-  text-shadow: 0 0 3px rgba(61, 255, 127, 0.14);
+  text-shadow: 0 0 2px rgba(61, 255, 127, 0.08);
 }
 
 body::before,
@@ -593,17 +593,17 @@ h2 {
   grid-area: controls;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 10px;
+  gap: 12px;
   align-items: end;
 }
 
 .settings-section {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
-  gap: 8px;
+  gap: 10px;
   align-items: end;
   min-width: 0;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid rgba(61, 255, 127, 0.22);
   border-radius: 8px;
   background:
@@ -990,7 +990,7 @@ button:hover {
 .test-alert-button {
   position: relative;
   z-index: 5;
-  min-height: 44px;
+  min-height: 46px;
   opacity: 0.82;
   pointer-events: auto;
   touch-action: manipulation;
@@ -1001,7 +1001,59 @@ button:hover {
 }
 
 .update-button {
-  min-height: 44px;
+  min-height: 46px;
+}
+
+.test-diagnostics {
+  grid-column: 1 / -1;
+  padding: 10px;
+  border: 1px solid rgba(61, 255, 127, 0.24);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(61, 255, 127, 0.06), transparent),
+    rgba(0, 0, 0, 0.18);
+}
+
+.test-diagnostics strong {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--accent);
+  font-size: 0.74rem;
+  letter-spacing: 0.14em;
+}
+
+.test-diagnostics ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.test-diagnostics li {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 4px 8px;
+  align-items: center;
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.test-diagnostics li span {
+  color: var(--accent);
+  font-size: 0.62rem;
+  font-weight: 950;
+}
+
+.test-diagnostics li.fail span {
+  color: var(--amber);
+}
+
+.test-diagnostics li em {
+  grid-column: 2;
+  color: var(--muted);
+  font-style: normal;
+  font-size: 0.7rem;
 }
 
 .status-strip {
@@ -1015,8 +1067,8 @@ button:hover {
 
 .status-strip > div,
 .status-strip > .status-tile-button {
-  min-height: 64px;
-  padding: 9px 12px;
+  min-height: 68px;
+  padding: 11px 13px;
   background: var(--panel);
   color: var(--muted);
   font-size: 1rem;

@@ -1,9 +1,9 @@
-const CACHE_NAME = "sky-watch-shell-v52";
+const CACHE_NAME = "sky-watch-shell-v53";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=display52",
-  "./app.js?v=display52",
+  "./styles.css?v=display53",
+  "./app.js?v=display53",
   "./assets/cornwall-air-ambulance-photo.png",
   "./assets/coastguard-helicopter.svg",
   "./manifest.webmanifest",

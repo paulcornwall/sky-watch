@@ -18,6 +18,8 @@ const elements = {
   chime: document.querySelector("#chimeButton"),
   testAlert: document.querySelector("#testAlertButton"),
   testSound: document.querySelector("#testSoundButton"),
+  testDiagnostics: document.querySelector("#testDiagnostics"),
+  testDiagnosticsList: document.querySelector("#testDiagnosticsList"),
   changeLocation: document.querySelector("#changeLocationButton"),
   airAmbulanceZoom: document.querySelector("#airAmbulanceZoomToggle"),
   autoCollapse: document.querySelector("#autoCollapseToggle"),
@@ -186,7 +188,7 @@ const storedDisplayMode =
       ? Boolean(bootPosition)
       : storedDisplayModePreference !== "false";
 const storedNightMode = window.localStorage.getItem("skyWatchNightMode") === "true";
-const storedChime = window.localStorage.getItem("skyWatchChime") === "true";
+const storedChime = window.localStorage.getItem("skyWatchChime") !== "false";
 const storedNightDim = window.localStorage.getItem("skyWatchNightDim") || "0.2";
 const storedNightSchedule = window.localStorage.getItem("skyWatchNightSchedule") === "true";
 const storedEmergencyNightChime = window.localStorage.getItem("skyWatchEmergencyNightChime") === "true";
@@ -337,6 +339,7 @@ let state = {
   controlsHideTimer: null,
   visibleStatusText: "",
   visibleStatusUntil: 0,
+  testDiagnostics: [],
   feedMode: liveServerAvailable ? "live server" : "browser direct",
   locationMode: launchPosition ? launchPosition.mode : savedPosition ? "saved home" : "location not set",
   homeLabel: bootPosition?.label || "",
@@ -2851,6 +2854,33 @@ function renderAirAmbulanceAlert() {
   }
 }
 
+function resetTestDiagnostics() {
+  state.testDiagnostics = [];
+  if (elements.testDiagnostics) elements.testDiagnostics.hidden = false;
+  renderTestDiagnostics();
+}
+
+function addTestDiagnostic(label, ok = true, detail = "") {
+  state.testDiagnostics.push({ label, ok, detail });
+  renderTestDiagnostics();
+}
+
+function renderTestDiagnostics() {
+  if (!elements.testDiagnostics || !elements.testDiagnosticsList) return;
+  elements.testDiagnostics.hidden = state.testDiagnostics.length === 0;
+  elements.testDiagnosticsList.innerHTML = state.testDiagnostics
+    .map(
+      (item) => `
+        <li class="${item.ok ? "pass" : "fail"}">
+          <span>${item.ok ? "PASS" : "FAIL"}</span>
+          <b>${escapeHtml(item.label)}</b>
+          ${item.detail ? `<em>${escapeHtml(item.detail)}</em>` : ""}
+        </li>
+      `,
+    )
+    .join("");
+}
+
 function minutesFromTime(value) {
   const [hours, minutes] = String(value || "00:00").split(":").map(Number);
   return (Number.isFinite(hours) ? hours : 0) * 60 + (Number.isFinite(minutes) ? minutes : 0);
@@ -2870,7 +2900,7 @@ function quietHoursActive() {
   return state.nightMode;
 }
 
-function removeTestAlertAircraft() {
+function removeTestAlertAircraft(showDiagnostic = true) {
   window.clearTimeout(state.testAlertClearTimer);
   state.testAlertClearTimer = null;
   state.testAlertUntil = 0;
@@ -2899,6 +2929,7 @@ function removeTestAlertAircraft() {
   updateMap();
   drawRadar();
   renderTicker();
+  if (showDiagnostic) addTestDiagnostic("Test cleared", true, "Dashboard returned to normal");
   console.info("Sky Watch test alert cleared");
 }
 
@@ -2946,32 +2977,48 @@ function showTestEmergencyFocus(aircraft) {
 }
 
 function testAirAmbulanceAlert() {
+  resetTestDiagnostics();
+  addTestDiagnostic("Button pressed", true);
   if (!state.userPosition) {
     setFallbackPreview("Demo base loaded for test alert.");
   }
-  removeTestAlertAircraft();
+  removeTestAlertAircraft(false);
   setMessage("Test nearby alert running", true);
+  addTestDiagnostic("Location available", Boolean(state.userPosition), state.homeLabel || state.locationMode || "base position");
   state.testAlertUntil = Date.now() + 45000;
   const testAircraft = createTestAirAmbulanceTrack();
   if (!testAircraft) {
     state.testAlertUntil = 0;
+    addTestDiagnostic("Test aircraft created", false, "Check saved location");
     setMessage("Test alert could not start — check location", true);
     console.warn("Sky Watch test alert could not start — no base location");
     return;
   }
+  addTestDiagnostic("Test aircraft created", true, `${testAircraft.flight} ${formatDistance(testAircraft.distance)} away`);
   state.testAlertAircraft = testAircraft;
   state.aircraft = [testAircraft, ...state.aircraft.filter((aircraft) => aircraft.id !== state.testAircraftId)];
   rememberTracks([testAircraft]);
-  closeSettingsPanel();
   applyFilter();
   selectAircraft(testAircraft);
   state.lastEmergencyFocusAt = Date.now();
   setRadarExpanded(true, true);
+  addTestDiagnostic("Radar expanded", document.body.classList.contains("radar-expanded"), "Emergency focus requested");
   window.clearTimeout(state.testAlertClearTimer);
   state.testAlertClearTimer = window.setTimeout(removeTestAlertAircraft, 45000);
-  playUrgentChime();
+  addTestDiagnostic("Cleanup timer set", true, "45 seconds");
+  const chimeAttempted = state.chimeEnabled ? playUrgentChime() : false;
+  if (!state.chimeEnabled) {
+    addTestDiagnostic("Chime attempted", false, "Visual test running — Chime is off");
+    setMessage("Visual test running — Chime is off", true);
+  } else if (chimeAttempted) {
+    addTestDiagnostic("Chime attempted", true, "Urgent tone requested");
+  } else {
+    addTestDiagnostic("Chime attempted", false, "Tap Test sound to unlock audio");
+    setMessage("Tap Test sound to unlock audio", true);
+  }
   renderAirAmbulanceAlert();
   showTestEmergencyFocus(testAircraft);
+  addTestDiagnostic("Banner shown", !elements.airAmbulanceAlert.hidden, "Visual emergency alert active");
   window.setTimeout(() => showTestEmergencyFocus(testAircraft), 120);
   window.setTimeout(() => showTestEmergencyFocus(testAircraft), 1200);
 }
@@ -3254,10 +3301,10 @@ function testSound() {
   state.lastSoundTestAt = now;
   const played = playTestTone();
   if (!played) {
-    setMessage("Audio unavailable on this device.", true);
+    setMessage("Audio blocked — tap again or check iPad volume/silent mode", true);
     return;
   }
-  setMessage(state.chimeEnabled ? "Test sound played." : "Test sound played. Chime remains off for live alerts.", true);
+  setMessage(state.chimeEnabled ? "Sound test played" : "Sound test played. Chime remains off for live alerts.", true);
 }
 
 function playDeploymentTone(activeKey) {
