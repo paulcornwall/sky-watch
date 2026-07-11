@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display48" />
+    <link rel="stylesheet" href="./styles.css?v=display49" />
   </head>
   <body class="kiosk-mode setup-active">
     <main class="app-shell">
@@ -30,6 +30,7 @@
           <p class="eyebrow">ADS-B terminal // live radius</p>
           <h1>Sky Watch</h1>
           <p class="title-credit">developed by Paul May Industries</p>
+          <p class="app-version">Sky Watch v49</p>
         </div>
         <div class="ticker-panel" aria-label="Live alert ticker">
           <div class="ticker-label">Signal feed</div>
@@ -85,6 +86,10 @@
           <button id="kioskButton" class="settings-button" type="button" title="Open settings">
             <span aria-hidden="true">⚙</span>
             Settings
+          </button>
+          <button id="quickUpdateButton" class="settings-button update-button" type="button" title="Update Sky Watch and clear cached files">
+            <span aria-hidden="true">↻</span>
+            Update
           </button>
         </div>
         <div class="controls" aria-label="Settings">
@@ -183,6 +188,10 @@
               <span aria-hidden="true">!</span>
               Test nearby alert
             </button>
+            <button id="testSoundButton" type="button" title="Test the chime sound without creating an aircraft alert.">
+              <span aria-hidden="true">♪</span>
+              Test sound
+            </button>
           </div>
 
           <div class="settings-section">
@@ -241,8 +250,8 @@
             <button id="resetSkyWatchButton" type="button" title="Clear saved Sky Watch settings on this device.">
               Reset local data
             </button>
-            <button id="refreshScreenButton" type="button" title="Flush cached app files and reload Sky Watch.">
-              Refresh screen
+            <button id="refreshScreenButton" type="button" title="Unregister the service worker, clear Sky Watch caches and reload the newest version.">
+              Update app / clear cache
             </button>
           </div>
           <p class="wake-hint">iPad: open the website in Safari, tap Share, Add to Home Screen, then use Display Mode. For all-day use, set Auto-Lock to Never where available or use Guided Access.</p>
@@ -273,7 +282,8 @@
         </div>
         <button id="airAmbulanceDeploymentsTile" class="status-tile-button" type="button" title="Show Cornwall Air Ambulance deployments seen in the last 24 hours">
           <span class="metric" id="airAmbulanceDeploymentCount">0</span>
-          <span id="airAmbulanceDeploymentStatus">Air Ambulance Deployments — 24h</span>
+          <span id="airAmbulanceDeploymentStatus">Air ambulance deployed in the last 24 hours</span>
+          <small id="airAmbulanceDeploymentStore">Stored on this device</small>
         </button>
         <div>
           <span class="metric" id="militaryLogCount">0</span>
@@ -481,6 +491,6 @@
     </section>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display48" defer></script>
+    <script src="./app.js?v=display49" defer></script>
   </body>
 </html>

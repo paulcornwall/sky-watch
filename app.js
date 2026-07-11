@@ -17,6 +17,7 @@ const elements = {
   nightEnd: document.querySelector("#nightEndInput"),
   chime: document.querySelector("#chimeButton"),
   testAlert: document.querySelector("#testAlertButton"),
+  testSound: document.querySelector("#testSoundButton"),
   changeLocation: document.querySelector("#changeLocationButton"),
   airAmbulanceZoom: document.querySelector("#airAmbulanceZoomToggle"),
   autoCollapse: document.querySelector("#autoCollapseToggle"),
@@ -31,6 +32,7 @@ const elements = {
   clearDeploymentLog: document.querySelector("#clearDeploymentLogButton"),
   resetSkyWatch: document.querySelector("#resetSkyWatchButton"),
   refreshScreen: document.querySelector("#refreshScreenButton"),
+  quickUpdate: document.querySelector("#quickUpdateButton"),
   displayPreset: document.querySelector("#displayPresetSelect"),
   expandRadar: document.querySelector("#expandRadarButton"),
   expandRadarAlert: document.querySelector("#expandRadarAlertButton"),
@@ -76,6 +78,7 @@ const elements = {
   airAmbulanceDeploymentsTile: document.querySelector("#airAmbulanceDeploymentsTile"),
   airAmbulanceDeploymentCount: document.querySelector("#airAmbulanceDeploymentCount"),
   airAmbulanceDeploymentStatus: document.querySelector("#airAmbulanceDeploymentStatus"),
+  airAmbulanceDeploymentStore: document.querySelector("#airAmbulanceDeploymentStore"),
   militaryLogCount: document.querySelector("#militaryLogCount"),
   militaryLogText: document.querySelector("#militaryLogText"),
   airAmbulanceAlert: document.querySelector("#airAmbulanceAlert"),
@@ -932,7 +935,7 @@ function localDeploymentLogText() {
 }
 
 async function showAirAmbulanceDeploymentLog() {
-  window.alert(`Air Ambulance Deployments — 24h\nDeployment counter is stored on this device only\n\n${localDeploymentLogText()}`);
+  window.alert(`Air ambulance deployed in the last 24 hours\nStored on this device\n\n${localDeploymentLogText()}`);
 }
 
 function updateRescueLog() {
@@ -2561,7 +2564,10 @@ function renderAirAmbulanceDeployments() {
   if (!elements.airAmbulanceDeploymentCount) return;
   state.airAmbulanceDeployments = pruneAirAmbulanceDeployments(state.airAmbulanceDeployments);
   elements.airAmbulanceDeploymentCount.textContent = state.airAmbulanceDeployments.length.toLocaleString();
-  if (elements.airAmbulanceDeploymentStatus) elements.airAmbulanceDeploymentStatus.textContent = "Device-only counter";
+  if (elements.airAmbulanceDeploymentStatus) {
+    elements.airAmbulanceDeploymentStatus.textContent = "Air ambulance deployed in the last 24 hours";
+  }
+  if (elements.airAmbulanceDeploymentStore) elements.airAmbulanceDeploymentStore.textContent = "Stored on this device";
 }
 
 function renderStats() {
@@ -2747,8 +2753,19 @@ function renderMilitaryLog() {
     : "no military within 5 mi";
 }
 
+function ensureAudioContext() {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!state.audioContext && AudioContext) state.audioContext = new AudioContext();
+  if (state.audioContext?.state === "suspended") {
+    state.audioContext.resume().catch((error) => console.warn("Sky Watch audio resume failed", error));
+  }
+  return state.audioContext || null;
+}
+
 function playUrgentChime() {
-  if (!state.nearbyToneEnabled || !state.chimeEnabled || !state.audioContext || (quietHoursActive() && !state.emergencyNightChimeEnabled)) return;
+  if (!state.nearbyToneEnabled || !state.chimeEnabled || (quietHoursActive() && !state.emergencyNightChimeEnabled)) return false;
+  const audioContext = ensureAudioContext();
+  if (!audioContext) return false;
   const now = state.audioContext.currentTime;
   for (const [index, frequency] of [988, 1319, 1760, 1319].entries()) {
     const oscillator = state.audioContext.createOscillator();
@@ -2762,6 +2779,7 @@ function playUrgentChime() {
     oscillator.start(now + index * 0.12);
     oscillator.stop(now + index * 0.12 + 0.13);
   }
+  return true;
 }
 
 function renderAirAmbulanceAlert() {
@@ -2920,6 +2938,13 @@ function testAirAmbulanceAlert() {
   window.setTimeout(() => showTestEmergencyFocus(testAircraft), 1200);
 }
 
+function handleTestAlertButtonPress(event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+  console.info("Test nearby alert button pressed");
+  testAirAmbulanceAlert();
+}
+
 function toggleKiosk() {
   if (!state.displayMode) {
     document.body.classList.toggle("kiosk-mode");
@@ -2998,7 +3023,7 @@ function updateInfoSettings() {
 }
 
 async function refreshScreenHard() {
-  setMessage("Refreshing Sky Watch screen and clearing cached app files...", true);
+  setMessage("Updating Sky Watch...", true);
   try {
     if ("caches" in window) {
       const keys = await caches.keys();
@@ -3011,8 +3036,9 @@ async function refreshScreenHard() {
   } catch (error) {
     console.warn(error);
   }
+  await new Promise((resolve) => window.setTimeout(resolve, 450));
   const url = new URL(window.location.href);
-  url.searchParams.set("refresh", String(Date.now()));
+  url.searchParams.set("update", String(Date.now()));
   window.location.replace(url.toString());
 }
 
@@ -3128,15 +3154,12 @@ function toggleChime() {
   state.chimeEnabled = !state.chimeEnabled;
   renderChimeButton();
   window.localStorage.setItem("skyWatchChime", String(state.chimeEnabled));
-  if (state.chimeEnabled && !state.audioContext) {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (AudioContext) state.audioContext = new AudioContext();
-  }
-  if (state.audioContext?.state === "suspended") state.audioContext.resume();
+  if (state.chimeEnabled) ensureAudioContext();
   if (state.chimeEnabled) alertForSpecialAircraft();
 }
 
 function renderChimeButton() {
+  if (!elements.chime) return;
   elements.chime.classList.toggle("armed", state.chimeEnabled);
   elements.chime.innerHTML = state.chimeEnabled
     ? quietHoursActive() && !state.emergencyNightChimeEnabled
@@ -3146,7 +3169,9 @@ function renderChimeButton() {
 }
 
 function playChime() {
-  if (!state.chimeEnabled || !state.audioContext || quietHoursActive()) return;
+  if (!state.chimeEnabled) return false;
+  const audioContext = ensureAudioContext();
+  if (!audioContext) return false;
   const now = state.audioContext.currentTime;
   for (const [index, frequency] of [880, 1175, 1568].entries()) {
     const oscillator = state.audioContext.createOscillator();
@@ -3160,6 +3185,16 @@ function playChime() {
     oscillator.start(now + index * 0.15);
     oscillator.stop(now + index * 0.15 + 0.16);
   }
+  return true;
+}
+
+function testSound() {
+  if (!state.chimeEnabled) {
+    setMessage("Chime is off - turn Chime on to hear Test sound.", true);
+    return;
+  }
+  const played = playChime();
+  setMessage(played ? "Test sound played." : "Audio unavailable on this device.", true);
 }
 
 function playDeploymentTone(activeKey) {
@@ -3648,11 +3683,13 @@ elements.resetSkyWatch?.addEventListener("click", () => {
   window.location.href = window.location.pathname;
 });
 elements.refreshScreen?.addEventListener("click", refreshScreenHard);
+elements.quickUpdate?.addEventListener("click", refreshScreenHard);
 elements.chime?.addEventListener("click", toggleChime);
-elements.testAlert?.addEventListener("click", () => {
-  console.info("Test nearby alert button pressed");
-  testAirAmbulanceAlert();
+elements.testAlert?.addEventListener("click", handleTestAlertButtonPress);
+document.addEventListener("click", (event) => {
+  if (event.target?.closest?.("#testAlertButton")) handleTestAlertButtonPress(event);
 });
+elements.testSound?.addEventListener("click", testSound);
 elements.airAmbulanceDeploymentsTile?.addEventListener("click", showAirAmbulanceDeploymentLog);
 elements.radius?.addEventListener("change", () => {
   window.localStorage.setItem("skyWatchRadius", elements.radius.value);
