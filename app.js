@@ -288,6 +288,8 @@ let state = {
   testAlertAircraft: null,
   testAircraftId: "SKY-WATCH-TEST-AIR-AMBULANCE",
   testAlertClearTimer: null,
+  lastTestButtonPressAt: 0,
+  lastSoundTestAt: 0,
   militaryLog: loadMilitaryLog(),
   rescueLog: loadRescueLog(),
   airAmbulanceDeployments: loadAirAmbulanceDeployments(),
@@ -333,6 +335,8 @@ let state = {
   newsTimer: null,
   autoCollapseTimer: null,
   controlsHideTimer: null,
+  visibleStatusText: "",
+  visibleStatusUntil: 0,
   feedMode: liveServerAvailable ? "live server" : "browser direct",
   locationMode: launchPosition ? launchPosition.mode : savedPosition ? "saved home" : "location not set",
   homeLabel: bootPosition?.label || "",
@@ -1201,6 +1205,11 @@ function staleMinutes() {
 }
 
 function renderFeedStatus() {
+  if (state.visibleStatusText && Date.now() < state.visibleStatusUntil) {
+    elements.feedStatus.textContent = state.visibleStatusText;
+    return;
+  }
+  state.visibleStatusText = "";
   const minutes = staleMinutes();
   const stale = minutes != null && minutes >= 5;
   const aircraftWarning = Boolean(state.feedError && (!state.lastUpdatedAt || Date.now() - state.lastUpdatedAt > 90000));
@@ -2072,8 +2081,15 @@ async function enrichAircraftRoutes(aircraftList) {
 }
 
 function setMessage(text, visible = true) {
-  elements.message.textContent = text;
-  elements.message.classList.toggle("show", visible);
+  if (elements.message) {
+    elements.message.textContent = text;
+    elements.message.classList.toggle("show", visible);
+  }
+  if (visible && text && elements.feedStatus) {
+    state.visibleStatusText = text;
+    state.visibleStatusUntil = Date.now() + 6500;
+    renderFeedStatus();
+  }
 }
 
 function refreshMapSize(delay = 0) {
@@ -2251,6 +2267,7 @@ function renderRadarSelection(aircraft) {
   if (!elements.radarSelection) return;
   if (!aircraft) {
     elements.radarSelection.hidden = true;
+    elements.radarSelection.innerHTML = "<strong>Track selected</strong><span>Tap aircraft for details</span>";
     return;
   }
   elements.radarSelection.hidden = false;
@@ -2320,6 +2337,19 @@ function collapseExpandedMapIfIdle() {
   if (!stillClose || noEmergencySeenFor >= 2 * 60 * 1000 || idleFor >= 20 * 60 * 1000) setRadarExpanded(false);
 }
 
+function boundsAroundPosition(position, miles) {
+  const lat = Number(position?.[0]);
+  const lon = Number(position?.[1]);
+  const radius = Math.max(1, Number(miles) || 1);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const latDelta = radius / 69;
+  const lonDelta = radius / Math.max(18, 69 * Math.cos((lat * Math.PI) / 180));
+  return L.latLngBounds(
+    [lat - latDelta, lon - lonDelta],
+    [lat + latDelta, lon + lonDelta],
+  );
+}
+
 function updateMap() {
   initMap();
   const radius = Number(elements.radius.value);
@@ -2339,18 +2369,26 @@ function updateMap() {
   if (!state.mapReady || !state.map || !state.userPosition) return;
 
   const position = [state.userPosition.lat, state.userPosition.lon];
-  if (state.radarExpanded && tracked?.specialReason && Number.isFinite(tracked.lat) && Number.isFinite(tracked.lon)) {
-    const bounds = L.latLngBounds([position, [tracked.lat, tracked.lon]]).pad(state.radarExpanded ? 0.12 : 0.34);
-    state.map.fitBounds(bounds, { animate: true, maxZoom: state.radarExpanded ? 16 : 10, padding: [34, 34] });
-    elements.mapLabel.textContent = state.radarExpanded ? `${tracked.specialReason} close focus` : `Tracking ${tracked.specialReason}`;
-  } else {
-    const radiusBounds = L.circle(position, { radius: milesToMeters(mapRadius) }).getBounds();
-    state.map.fitBounds(radiusBounds, {
-      animate: false,
-      maxZoom: state.radarExpanded ? 11 : 12,
-      padding: state.radarExpanded ? [24, 24] : [18, 18],
-    });
-    elements.mapLabel.textContent = tracked?.specialReason && !state.radarExpanded ? `Priority in ${mapRadius} mi sector` : state.radarExpanded ? "Expanded sector map" : "Live sector map";
+  try {
+    if (state.radarExpanded && tracked?.specialReason && Number.isFinite(tracked.lat) && Number.isFinite(tracked.lon)) {
+      const bounds = L.latLngBounds([position, [tracked.lat, tracked.lon]]).pad(state.radarExpanded ? 0.12 : 0.34);
+      state.map.fitBounds(bounds, { animate: true, maxZoom: state.radarExpanded ? 16 : 10, padding: [34, 34] });
+      elements.mapLabel.textContent = state.radarExpanded ? `${tracked.specialReason} close focus` : `Tracking ${tracked.specialReason}`;
+    } else {
+      const radiusBounds = boundsAroundPosition(position, mapRadius);
+      if (radiusBounds) {
+        state.map.fitBounds(radiusBounds, {
+          animate: false,
+          maxZoom: state.radarExpanded ? 11 : 12,
+          padding: state.radarExpanded ? [24, 24] : [18, 18],
+        });
+      }
+      elements.mapLabel.textContent = tracked?.specialReason && !state.radarExpanded ? `Priority in ${mapRadius} mi sector` : state.radarExpanded ? "Expanded sector map" : "Live sector map";
+    }
+  } catch (error) {
+    console.warn("Sky Watch map fit skipped", error);
+    state.mapTileError = true;
+    if (elements.mapTileWarning) elements.mapTileWarning.hidden = false;
   }
 
   if (!state.homeMarker) {
@@ -2941,6 +2979,9 @@ function testAirAmbulanceAlert() {
 function handleTestAlertButtonPress(event) {
   event?.preventDefault();
   event?.stopPropagation();
+  const now = Date.now();
+  if (now - state.lastTestButtonPressAt < 500) return;
+  state.lastTestButtonPressAt = now;
   console.info("Test nearby alert button pressed");
   testAirAmbulanceAlert();
 }
@@ -3188,13 +3229,35 @@ function playChime() {
   return true;
 }
 
+function playTestTone() {
+  const audioContext = ensureAudioContext();
+  if (!audioContext) return false;
+  const now = audioContext.currentTime;
+  for (const [index, frequency] of [740, 988, 1319].entries()) {
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0, now + index * 0.14);
+    gain.gain.linearRampToValueAtTime(0.09, now + index * 0.14 + 0.018);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.14 + 0.13);
+    oscillator.connect(gain).connect(audioContext.destination);
+    oscillator.start(now + index * 0.14);
+    oscillator.stop(now + index * 0.14 + 0.15);
+  }
+  return true;
+}
+
 function testSound() {
-  if (!state.chimeEnabled) {
-    setMessage("Chime is off - turn Chime on to hear Test sound.", true);
+  const now = Date.now();
+  if (now - state.lastSoundTestAt < 500) return;
+  state.lastSoundTestAt = now;
+  const played = playTestTone();
+  if (!played) {
+    setMessage("Audio unavailable on this device.", true);
     return;
   }
-  const played = playChime();
-  setMessage(played ? "Test sound played." : "Audio unavailable on this device.", true);
+  setMessage(state.chimeEnabled ? "Test sound played." : "Test sound played. Chime remains off for live alerts.", true);
 }
 
 function playDeploymentTone(activeKey) {
@@ -3686,10 +3749,18 @@ elements.refreshScreen?.addEventListener("click", refreshScreenHard);
 elements.quickUpdate?.addEventListener("click", refreshScreenHard);
 elements.chime?.addEventListener("click", toggleChime);
 elements.testAlert?.addEventListener("click", handleTestAlertButtonPress);
+elements.testAlert?.addEventListener("pointerup", handleTestAlertButtonPress);
 document.addEventListener("click", (event) => {
   if (event.target?.closest?.("#testAlertButton")) handleTestAlertButtonPress(event);
 });
+document.addEventListener("pointerup", (event) => {
+  if (event.target?.closest?.("#testAlertButton")) handleTestAlertButtonPress(event);
+});
 elements.testSound?.addEventListener("click", testSound);
+elements.testSound?.addEventListener("pointerup", (event) => {
+  event.preventDefault();
+  testSound();
+});
 elements.airAmbulanceDeploymentsTile?.addEventListener("click", showAirAmbulanceDeploymentLog);
 elements.radius?.addEventListener("change", () => {
   window.localStorage.setItem("skyWatchRadius", elements.radius.value);
