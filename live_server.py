@@ -714,8 +714,11 @@ class LiveFeedHandler(SimpleHTTPRequestHandler):
 
     def handle_bitcoin(self):
         endpoint = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1"
-        data = cached("bitcoin:usd:day", CACHE_SECONDS["bitcoin"], lambda: fetch_json(endpoint))
-        json_response(self, {"source": "coingecko.com", "data": data})
+        try:
+            data = cached("bitcoin:usd:day", CACHE_SECONDS["bitcoin"], lambda: fetch_json(endpoint))
+            json_response(self, {"source": "coingecko.com", "data": data})
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
+            json_response(self, {"source": "coingecko.com", "data": {"prices": []}, "error": str(error), "status": "unavailable"})
 
     def handle_news(self):
         endpoint = "https://feeds.bbci.co.uk/news/rss.xml"
@@ -737,8 +740,11 @@ class LiveFeedHandler(SimpleHTTPRequestHandler):
                     items.append({"title": unescape(title.strip())})
             return items
 
-        data = cached("news:bbc", CACHE_SECONDS["news"], load_news)
-        json_response(self, {"source": "BBC News", "items": data})
+        try:
+            data = cached("news:bbc", CACHE_SECONDS["news"], load_news)
+            json_response(self, {"source": "BBC News", "items": data})
+        except (HTTPError, URLError, TimeoutError, ET.ParseError) as error:
+            json_response(self, {"source": "BBC News", "items": [], "error": str(error), "status": "unavailable"})
 
     def handle_deployments_summary(self):
         json_response(self, deployment_summary())

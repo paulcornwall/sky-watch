@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <link rel="stylesheet" href="./styles.css?v=display53" />
+    <link rel="stylesheet" href="./styles.css?v=display56" />
   </head>
   <body class="kiosk-mode setup-active">
     <main class="app-shell">
@@ -30,7 +30,7 @@
           <p class="eyebrow">ADS-B terminal // live radius</p>
           <h1>Sky Watch</h1>
           <p class="title-credit">developed by Paul May Industries</p>
-          <p class="app-version">Sky Watch v53</p>
+          <p class="app-version">Sky Watch v56</p>
         </div>
         <div class="ticker-panel" aria-label="Live alert ticker">
           <div class="ticker-label">Signal feed</div>
@@ -382,7 +382,7 @@
           <canvas id="radarCanvas" width="720" height="720"></canvas>
           <div class="map-header">
             <span id="mapLabel">Live sector map</span>
-            <strong id="mapRangeLabel">50 mi radius</strong>
+              <strong id="mapRangeLabel">Radar — 50-mile radius</strong>
             <button id="expandRadarButton" type="button">Expand</button>
           </div>
           <div id="mapTileWarning" class="map-tile-warning" hidden>Map tiles unavailable — radar fallback active</div>
@@ -436,6 +436,7 @@
         <section class="table-panel" aria-label="Nearby aircraft">
           <div class="table-heading">
             <h2>Aircraft</h2>
+            <span id="aircraftTableRadius" class="panel-note">50-mile radius</span>
             <input id="filterInput" type="search" placeholder="Filter flight, airline or route" />
           </div>
           <div id="message" class="message">
@@ -495,6 +496,6 @@
     </section>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
-    <script src="./app.js?v=display53" defer></script>
+    <script src="./app.js?v=display56" defer></script>
   </body>
 </html>

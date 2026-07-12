@@ -70,6 +70,7 @@ const elements = {
   nearestList: document.querySelector("#nearestAircraftList"),
   rescueLogList: document.querySelector("#rescueLogList"),
   rows: document.querySelector("#aircraftRows"),
+  aircraftTableRadius: document.querySelector("#aircraftTableRadius"),
   message: document.querySelector("#message"),
   count: document.querySelector("#aircraftCount"),
   nearest: document.querySelector("#nearestPlane"),
@@ -210,7 +211,7 @@ const storedRadius = window.localStorage.getItem("skyWatchRadius");
 const storedAircraftCategory = window.localStorage.getItem("skyWatchAircraftCategory") || "all";
 const storedDisplayPreset = window.localStorage.getItem("skyWatchDisplayPreset") || "wall";
 const airAmbulancePhoto = "./assets/cornwall-air-ambulance-photo.png";
-const coastguardPhoto = "./assets/coastguard-helicopter.svg";
+const coastguardPhoto = "./assets/coastguard-helicopter-photo.jpg";
 const logoCache = new Map();
 
 function loadStringSet(key) {
@@ -339,6 +340,7 @@ let state = {
   controlsHideTimer: null,
   visibleStatusText: "",
   visibleStatusUntil: 0,
+  initialConnecting: Boolean(bootPosition),
   testDiagnostics: [],
   feedMode: liveServerAvailable ? "live server" : "browser direct",
   locationMode: launchPosition ? launchPosition.mode : savedPosition ? "saved home" : "location not set",
@@ -457,18 +459,6 @@ const coastguardIdentifiers = [
   "CG203",
   "G-HMGA",
   "G-HMGC",
-];
-
-const skybusIdentifiers = [
-  "IOS",
-  "SKYBUS",
-  "SCILLONIA",
-  "ISLES OF SCILLY SKYBUS",
-  "G-BIHO",
-  "GBIHO",
-  "DHC6",
-  "DHC-6",
-  "TWIN OTTER",
 ];
 
 const localPlaces = [
@@ -1216,28 +1206,20 @@ function renderFeedStatus() {
   const minutes = staleMinutes();
   const stale = minutes != null && minutes >= 5;
   const aircraftWarning = Boolean(state.feedError && (!state.lastUpdatedAt || Date.now() - state.lastUpdatedAt > 90000));
-  const aircraftStatus = aircraftWarning
-    ? state.lastUpdatedAt
-      ? "aircraft retrying"
-      : "aircraft waiting"
-    : stale
-      ? "aircraft stale"
-      : state.lastUpdatedAt
-        ? "aircraft live"
-        : "aircraft waiting";
-  const weatherStatus = state.weatherError
-    ? state.weatherUpdatedAt
-      ? "weather retrying"
-      : "weather waiting"
-    : state.weatherUpdatedAt
-      ? "weather live"
-      : "weather waiting";
+  const aircraftStatus = aircraftWarning ? "Aircraft feed unavailable" : stale ? "Reconnecting" : state.lastUpdatedAt ? "Live" : "Connecting";
+  const weatherStatus = state.weatherError ? "Weather feed unavailable" : state.weatherUpdatedAt ? "weather live" : "weather waiting";
   const location = state.locationMode === "fallback location" ? "London demo" : state.homeLabel || "Location waiting";
-  const lastAircraft = state.lastUpdatedAt ? `aircraft ${formatClock(new Date(state.lastUpdatedAt))}` : "aircraft not loaded";
-  const nextRefresh = state.lastRefreshAttemptAt ? `next aircraft refresh ${formatLeadTime(state.lastRefreshAttemptAt + 60000)}` : "next aircraft refresh waiting";
-  const lastWeather = state.weatherUpdatedAt ? `weather ${formatClock(new Date(state.weatherUpdatedAt))}` : "weather not loaded";
+  let summary = "Location required";
+  if (state.userPosition) {
+    if (aircraftWarning) summary = state.lastUpdatedAt ? `Reconnecting — updated ${formatAge(state.lastUpdatedAt)}` : "Aircraft feed unavailable";
+    else if (state.weatherError && !state.weatherUpdatedAt) summary = "Weather feed unavailable";
+    else if (state.lastUpdatedAt) summary = `Live — updated ${formatAge(state.lastUpdatedAt)}`;
+    else summary = "Connecting";
+  }
+  const nextRefresh = state.lastRefreshAttemptAt ? `next refresh ${formatLeadTime(state.lastRefreshAttemptAt + 60000)}` : "next refresh waiting";
+  const lastWeather = state.weatherUpdatedAt ? `weather ${formatClock(new Date(state.weatherUpdatedAt))}` : "weather waiting";
   document.body.classList.toggle("data-stale", Boolean(stale || aircraftWarning || state.weatherError));
-  elements.feedStatus.textContent = `${aircraftStatus} · ${weatherStatus} · ${location} · ${lastAircraft} · ${nextRefresh} · ${lastWeather}`;
+  elements.feedStatus.textContent = `${summary} · ${location} · ${nextRefresh} · ${lastWeather}`;
   renderHomeStatus({ aircraftStatus, weatherStatus, stale, aircraftWarning, location });
 }
 
@@ -1424,6 +1406,10 @@ async function fetchBitcoin() {
     state.bitcoinUpdatedAt = Date.now();
   } catch (error) {
     console.warn(error);
+    if (liveServerAvailable) {
+      renderTicker();
+      return;
+    }
     try {
       const response = await fetch("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1", {
         cache: "no-store",
@@ -1525,10 +1511,40 @@ function brandingForFlight(flight) {
   return airlineBranding[prefix] || { label: fallback, colors: ["#4d5b55", "#9fb4aa"] };
 }
 
-function airlineLogoUrl(flight) {
-  const prefix = airlineCodeFromFlight(flight);
-  if (!airlineBranding[prefix]) return "";
-  const branding = brandingForFlight(flight);
+function operatorCode(aircraft = {}) {
+  const direct = [
+    aircraft.operatorIcao,
+    aircraft.operatorCode,
+    aircraft.operator_iata,
+    aircraft.operator_icao,
+  ]
+    .map((value) => String(value || "").replace(/[^A-Z0-9]/gi, "").toUpperCase())
+    .find((value) => value.length >= 2 && value.length <= 4);
+  return direct || airlineCodeFromFlight(aircraft.flight || aircraft.callsign);
+}
+
+function fallbackOperatorLabel(aircraft = {}) {
+  const code = operatorCode(aircraft);
+  if (code) return code.slice(0, 4);
+  const source = aircraft.airline || aircraft.operator || aircraft.flight || aircraft.callsign || "SW";
+  const words = String(source).match(/[A-Z0-9]+/gi) || [];
+  const initials = words.length > 1 ? words.map((word) => word[0]).join("") : words[0] || "SW";
+  return initials.slice(0, 4).toUpperCase();
+}
+
+function brandingForAircraft(aircraft = {}) {
+  const code = operatorCode(aircraft);
+  const flightPrefix = airlineCodeFromFlight(aircraft.flight);
+  const fallback = fallbackOperatorLabel(aircraft);
+  return airlineBranding[code] || airlineBranding[flightPrefix] || { label: fallback, colors: ["#4d5b55", "#9fb4aa"] };
+}
+
+function airlineLogoUrl(aircraft = {}) {
+  const code = operatorCode(aircraft);
+  const flightPrefix = airlineCodeFromFlight(aircraft.flight);
+  const logoCode = airlineBranding[code] ? code : airlineBranding[flightPrefix] ? flightPrefix : "";
+  if (!logoCode) return "";
+  const branding = airlineBranding[logoCode] || brandingForAircraft(aircraft);
   if (!branding?.label || branding.label === "??") return "";
   return `https://images.kiwi.com/airlines/128x128/${encodeURIComponent(branding.label)}.png`;
 }
@@ -1564,14 +1580,14 @@ function airlineLogoMarkup(aircraft, extraClass = "", id = "") {
       </span>
     `;
   }
-  const branding = brandingForFlight(aircraft.flight);
-  const logo = airlineLogoUrl(aircraft.flight);
+  const branding = brandingForAircraft(aircraft);
+  const logo = airlineLogoUrl(aircraft);
   preloadLogo(logo);
   const label = escapeHtml(branding.label);
   const name = escapeHtml(`${aircraft.airline || "Airline"} logo`);
   const source = logo ? ` data-logo-src="${escapeHtml(logo)}"` : "";
   return `
-    <span ${id ? `id="${id}" ` : ""}class="airline-logo ${extraClass}${logo ? "" : " logo-fallback"}" aria-label="${name}" data-logo-key="${escapeHtml(airlineCodeFromFlight(aircraft.flight))}"${source}>
+    <span ${id ? `id="${id}" ` : ""}class="airline-logo ${extraClass}${logo ? "" : " logo-fallback"}" aria-label="${name}" data-logo-key="${escapeHtml(operatorCode(aircraft) || airlineCodeFromFlight(aircraft.flight) || label)}"${source}>
       ${logo ? `<img src="${logo}" alt="" loading="eager" decoding="async" referrerpolicy="no-referrer" onload="this.parentElement.classList.add('logo-loaded')" onerror="this.remove(); this.parentElement.classList.add('logo-fallback')" />` : ""}
       <span class="logo-initials">${label}</span>
     </span>
@@ -1579,8 +1595,8 @@ function airlineLogoMarkup(aircraft, extraClass = "", id = "") {
 }
 
 function setSpotlightLogo(aircraft) {
-  const branding = brandingForFlight(aircraft.flight);
-  const key = airlineCodeFromFlight(aircraft.flight);
+  const branding = brandingForAircraft(aircraft);
+  const key = operatorCode(aircraft) || airlineCodeFromFlight(aircraft.flight) || fallbackOperatorLabel(aircraft);
   const currentKey = elements.spotlightLogo?.dataset.logoKey || "";
   elements.spotlightLogo.style.setProperty("--logo-a", branding.colors[0]);
   elements.spotlightLogo.style.setProperty("--logo-b", branding.colors[1]);
@@ -1632,7 +1648,10 @@ function routeCellMarkup(name, code = "", time = "") {
 
 function displayServiceName(aircraft) {
   if (!aircraft) return "No aircraft in range";
-  if (aircraft.specialReason === "Air ambulance") return "Cornwall Air Ambulance";
+  if (aircraft.specialReason === "Air ambulance") {
+    if (!cornwallAirAmbulanceSupported()) return demoLocationActive() ? "DEMO DATA rescue aircraft" : "Air ambulance";
+    return "Cornwall Air Ambulance";
+  }
   if (aircraft.specialReason === "Coastguard") return "Coastguard Rescue";
   if (aircraft.specialReason === "Military") return aircraft.airline && aircraft.airline !== "Unknown airline" ? aircraft.airline : "Military aircraft";
   if (aircraft.skybus || isSkybus(aircraft)) return "Isles of Scilly Skybus";
@@ -1691,6 +1710,28 @@ function compactIdentity(value) {
   return String(value || "").replace(/[^A-Z0-9]/gi, "").toUpperCase();
 }
 
+function normaliseCallsign(value) {
+  return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+}
+
+function routeDebugEnabled() {
+  const params = new URLSearchParams(window.location.search);
+  return params.has("debug") || window.localStorage.getItem("skyWatchDebug") === "true";
+}
+
+function routeDebugLog(aircraft, details, reason) {
+  if (!routeDebugEnabled()) return;
+  console.debug("Sky Watch route match", {
+    id: aircraft?.id,
+    hex: aircraft?.hex,
+    callsign: normaliseCallsign(aircraft?.flight || aircraft?.callsign),
+    matchedFlightRecord: details ? "route details returned" : "none",
+    originSource: details?.from || details?.fromCode ? "route provider" : "unavailable",
+    destinationSource: details?.to || details?.toCode ? "route provider" : "unavailable",
+    reason,
+  });
+}
+
 function matchesIdentifier(aircraft, identifiers) {
   const identity = aircraftIdentityText(aircraft);
   const compact = compactIdentity(identity);
@@ -1700,9 +1741,28 @@ function matchesIdentifier(aircraft, identifiers) {
   });
 }
 
+function isSkybusCallsign(value) {
+  const callsign = normaliseCallsign(value);
+  return /^IOS\d+[A-Z]*$/.test(callsign) || /^SCILLONIA[A-Z0-9]*$/.test(callsign);
+}
+
+function skybusOperatorConfirmed(aircraft) {
+  const operatorText = [
+    aircraft?.operator,
+    aircraft?.operatorIcao,
+    aircraft?.operatorCode,
+  ].map((value) => String(value || "").toUpperCase()).join(" ");
+  const registration = compactIdentity(aircraft?.registration || aircraft?.r);
+  return (
+    /\bISLES OF SCILLY SKYBUS\b/.test(operatorText) ||
+    /\bSCILLONIA\b/.test(operatorText) ||
+    /\bSKYBUS\b/.test(operatorText) ||
+    registration === "GBIHO"
+  );
+}
+
 function isSkybus(aircraft) {
-  const flight = String(aircraft?.flight || "").toUpperCase();
-  return /^IOS\d|^SCILLONIA/.test(flight) || matchesIdentifier(aircraft, skybusIdentifiers);
+  return isSkybusCallsign(aircraft?.flight || aircraft?.callsign) || skybusOperatorConfirmed(aircraft);
 }
 
 function nearestPlace(lat, lon) {
@@ -1815,7 +1875,6 @@ function decorateAircraft(aircraft) {
     specialReason = "";
   }
   const skybus = isSkybus({ ...aircraft, specialReason });
-  const routeUnavailable = routeNeedsLookup(aircraft);
   const decorated = {
     ...aircraft,
     airline: skybus ? "Isles of Scilly Skybus" : aircraft.airline,
@@ -1823,12 +1882,6 @@ function decorateAircraft(aircraft) {
     specialReason,
     status: movementStatus(aircraft),
   };
-  if (skybus && routeUnavailable) {
-    decorated.from = "Land's End";
-    decorated.fromCode = "LEQ";
-    decorated.to = "Isles of Scilly";
-    decorated.toCode = "ISC";
-  }
   return {
     ...decorated,
     airAmbulanceStatus: specialReason === "Air ambulance" ? airAmbulanceTrackingStatus(decorated) : "",
@@ -1883,6 +1936,8 @@ function normalizeAircraft(item, origin) {
     callsign: item.callsign,
     hex: item.hex || item.icao,
     operator: item.ownOp || item.operator,
+    operatorIcao: item.operator_icao || item.operatorIcao || item.ownOpIcao || item.ownOpICAO,
+    operatorCode: item.operator_iata || item.operatorIata || item.ownOpIata || item.ownOpIATA,
     airline: airlineFromFlight(flight, item.ownOp || item.operator || item.airline),
     aircraftType: formatAircraftType(item.t || item.type || item.aircraft_type),
     altitude: item.alt_baro ?? item.alt_geom ?? item.altitude,
@@ -2034,7 +2089,7 @@ function routeAvailable(aircraft) {
 }
 
 function routeLookupCandidate(aircraft) {
-  const callsign = String(aircraft.flight || "").trim().toUpperCase();
+  const callsign = normaliseCallsign(aircraft.flight || aircraft.callsign);
   if (!callsign || /unknown/i.test(callsign)) return false;
   if (/^\d+$/.test(callsign)) return false;
   if (!/[A-Z]{3}\d/.test(callsign)) return false;
@@ -2043,21 +2098,39 @@ function routeLookupCandidate(aircraft) {
   return routeNeedsLookup(aircraft);
 }
 
+function routeMentionsIslesOfScilly(details) {
+  const text = [
+    details?.from,
+    details?.fromCode,
+    details?.to,
+    details?.toCode,
+  ].map((value) => String(value || "").toUpperCase()).join(" ");
+  return /\b(ISC|EGHE)\b|ISLES OF SCILLY|ST MARY'S|ST MARYS|ST MARY/.test(text);
+}
+
 async function fetchRouteDetails(aircraft) {
-  const callsign = String(aircraft.flight || "").trim().toUpperCase();
+  const callsign = normaliseCallsign(aircraft.flight || aircraft.callsign);
   if (!callsign || !liveServerAvailable || !routeLookupCandidate(aircraft)) return null;
-  if (state.routeCache.has(callsign)) return state.routeCache.get(callsign);
+  const cacheKey = [compactIdentity(aircraft.hex || aircraft.id), callsign].filter(Boolean).join(":");
+  if (state.routeCache.has(cacheKey)) return state.routeCache.get(cacheKey);
   try {
     const url = new URL("/api/route", window.location.origin);
     url.search = new URLSearchParams({ callsign }).toString();
     const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) throw new Error(`Route lookup returned ${response.status}`);
     const details = extractRouteDetails(await response.json());
-    state.routeCache.set(callsign, details);
+    if (details && routeMentionsIslesOfScilly(details) && !isSkybus(aircraft)) {
+      routeDebugLog(aircraft, details, "discarded Scilly route for non-Skybus aircraft");
+      state.routeCache.set(cacheKey, null);
+      return null;
+    }
+    routeDebugLog(aircraft, details, details ? "provider route accepted" : "provider returned no usable route");
+    state.routeCache.set(cacheKey, details);
     return details;
   } catch (error) {
     console.warn(error);
-    state.routeCache.set(callsign, null);
+    routeDebugLog(aircraft, null, error.message || "route lookup failed");
+    state.routeCache.set(cacheKey, null);
     return null;
   }
 }
@@ -2368,7 +2441,7 @@ function updateMap() {
       ? `${mapRadius} mi expanded`
     : tracked?.specialReason
       ? `${tracked.flight} · ${formatDistance(tracked.distance)}`
-      : `${radius} mi radius`;
+      : `Radar — ${radius}-mile radius`;
   if (!state.mapReady || !state.map || !state.userPosition) return;
 
   const position = [state.userPosition.lat, state.userPosition.lon];
@@ -2518,7 +2591,7 @@ function renderAircraftFilterButtons() {
 function renderTable() {
   elements.rows.innerHTML = "";
   for (const aircraft of state.filtered) {
-    const branding = brandingForFlight(aircraft.flight);
+    const branding = brandingForAircraft(aircraft);
     const tr = document.createElement("tr");
     tr.style.setProperty("--logo-a", branding.colors[0]);
     tr.style.setProperty("--logo-b", branding.colors[1]);
@@ -2541,7 +2614,9 @@ function renderTable() {
   }
 
   if (!state.loading && state.filtered.length === 0) {
-    setMessage("No aircraft match the current search.", true);
+    const term = elements.filter.value.trim();
+    const radius = Number(elements.radius.value) || 50;
+    setMessage(term ? "No aircraft match the current search." : `No aircraft currently detected within ${radius} miles.`, true);
   } else if (!state.loading) {
     setMessage("", false);
   }
@@ -2551,13 +2626,14 @@ function renderNearestList() {
   if (!elements.nearestList) return;
   const aircraftList = state.filtered.slice(0, 5);
   if (!aircraftList.length) {
-    elements.nearestList.innerHTML = `<div class="empty-state">Waiting for aircraft within selected radius</div>`;
+    const radius = Number(elements.radius.value) || 50;
+    elements.nearestList.innerHTML = `<div class="empty-state">${state.initialConnecting ? "Connecting to live aircraft, weather and rescue feeds..." : `No aircraft currently detected within ${radius} miles`}</div>`;
     return;
   }
 
   elements.nearestList.innerHTML = aircraftList
     .map((aircraft) => {
-      const branding = brandingForFlight(aircraft.flight);
+      const branding = brandingForAircraft(aircraft);
       const status = aircraft.airAmbulanceStatus || aircraft.specialReason || (aircraft.skybus ? "Skybus island service" : aircraft.status);
       const route = routeNeedsLookup(aircraft)
         ? "Route unavailable"
@@ -2618,6 +2694,7 @@ function renderStats() {
   elements.updated.textContent = formatAge(state.lastUpdatedAt);
   elements.closestToday.textContent = state.closestToday ? formatDistance(state.closestToday) : "Waiting";
   elements.lowestToday.textContent = state.lowestToday ? formatAltitude(state.lowestToday) : "Waiting";
+  if (elements.aircraftTableRadius) elements.aircraftTableRadius.textContent = `${Number(elements.radius.value) || 50}-mile radius`;
   if (state.userPosition) {
     const label = state.locationMode === "fallback location" ? fallbackPosition.label : state.homeLabel || "Saved home";
     elements.center.textContent = `${label} · ${state.userPosition.lat.toFixed(4)}, ${state.userPosition.lon.toFixed(4)}`;
@@ -2633,6 +2710,14 @@ function renderStats() {
   maybeExpandAirAmbulanceMap();
   renderFeedStatus();
   renderTicker();
+}
+
+function renderLiveAges() {
+  elements.updated.textContent = formatAge(state.lastUpdatedAt);
+  if (state.filtered.length) {
+    elements.spotlightSeen.textContent = formatAge((emergencyFocusAircraft() || state.filtered[state.spotlightIndex] || state.filtered[0])?.seenAt || state.lastUpdatedAt);
+  }
+  renderFeedStatus();
 }
 
 function renderSpotlight() {
@@ -2672,7 +2757,9 @@ function renderSpotlight() {
   elements.spotlightFlight.textContent = displayServiceName(aircraft);
   elements.spotlightAirline.textContent = `Callsign ${aircraft.flight}`;
   elements.spotlightStatus.textContent = aircraft.specialReason
-    ? aircraft.airAmbulanceStatus || `${aircraft.specialReason} · ${aircraft.status}`
+    ? aircraft.specialReason === "Air ambulance" && !cornwallAirAmbulanceSupported()
+      ? "DEMO DATA · local air ambulance monitoring is not currently available for this area"
+      : aircraft.airAmbulanceStatus || `${aircraft.specialReason} · ${aircraft.status}`
     : aircraft.skybus
       ? `Skybus island service · ${aircraft.status}`
       : aircraft.status;
@@ -2753,8 +2840,22 @@ function emergencyAlertDetails(aircraft) {
   ].filter(Boolean).join(" · ");
 }
 
+function cornwallAirAmbulanceSupported() {
+  if (!state.userPosition) return false;
+  return distanceFromCoords(state.userPosition, airAmbulanceWaypoints.base) <= 120;
+}
+
+function demoLocationActive() {
+  return state.locationMode === "demo location" || /demo/i.test(state.homeLabel || "");
+}
+
 function renderAirAmbulanceWatch() {
   const aircraft = emergencyFocusAircraft() || activeRescueAircraft();
+  if (aircraft?.specialReason === "Air ambulance" && !cornwallAirAmbulanceSupported()) {
+    elements.airAmbulanceWatch.textContent = demoLocationActive() ? "DEMO DATA" : "Unavailable";
+    elements.airAmbulanceWatchText.textContent = "Local air ambulance monitoring is not currently available for this area.";
+    return;
+  }
   if (aircraft) {
     const distance = Number(aircraft.distance);
     const stateLabel = aircraft.id === state.testAircraftId
@@ -2768,6 +2869,12 @@ function renderAirAmbulanceWatch() {
             : "Airborne";
     elements.airAmbulanceWatch.textContent = stateLabel;
     elements.airAmbulanceWatchText.textContent = `${aircraft.specialReason} · ${aircraft.flight} · ${aircraft.airAmbulanceStatus || placePhrase(aircraft)} · ${formatDistance(aircraft.distance)}`;
+    return;
+  }
+
+  if (!cornwallAirAmbulanceSupported()) {
+    elements.airAmbulanceWatch.textContent = demoLocationActive() ? "DEMO DATA" : "Unavailable";
+    elements.airAmbulanceWatchText.textContent = "Local air ambulance monitoring is not currently available for this area.";
     return;
   }
 
@@ -2919,7 +3026,7 @@ function removeTestAlertAircraft(showDiagnostic = true) {
     if (state.radarExpanded) setRadarExpanded(false, true);
     renderRadarSelection(null);
     elements.mapLabel.textContent = "Live sector map";
-    elements.mapRangeLabel.textContent = `${Number(elements.radius.value) || 50} mi radius`;
+    elements.mapRangeLabel.textContent = `Radar — ${Number(elements.radius.value) || 50}-mile radius`;
   } else {
     renderRadarSelection(realEmergency);
   }
@@ -3608,7 +3715,7 @@ async function refreshAircraft() {
   state.lastRefreshAttemptAt = Date.now();
   state.userPosition = { lat, lon };
   elements.source.textContent = state.lastUpdatedAt ? "Refreshing" : "Loading";
-  if (!state.lastUpdatedAt) setMessage("Checking nearby aircraft...", true);
+  if (!state.lastUpdatedAt) setMessage("Connecting to live aircraft, weather and rescue feeds...", true);
   drawRadar();
   fetchWeather(state.userPosition);
 
@@ -3659,6 +3766,7 @@ async function refreshAircraft() {
     window.setTimeout(refreshAircraft, Math.min(30000, 5000 * state.refreshFailures));
   } finally {
     state.loading = false;
+    state.initialConnecting = false;
     renderFeedStatus();
   }
 }
@@ -3878,9 +3986,9 @@ state.refreshTimer = window.setInterval(refreshAircraft, 60000);
 state.weatherTimer = window.setInterval(() => fetchWeather(state.userPosition), 30 * 60 * 1000);
 state.bitcoinTimer = window.setInterval(fetchBitcoin, 5 * 60 * 1000);
 state.newsTimer = window.setInterval(fetchNews, 5 * 60 * 1000);
-state.updateClock = window.setInterval(renderStats, 1000);
+state.updateClock = window.setInterval(renderLiveAges, 1000);
 state.dateClock = window.setInterval(updateDateTime, 1000);
-state.staleTimer = window.setInterval(renderFeedStatus, 30000);
+state.staleTimer = window.setInterval(renderFeedStatus, 5000);
 state.burnInTimer = window.setInterval(updateBurnInShift, 3 * 60 * 1000);
 state.autoCollapseTimer = window.setInterval(collapseExpandedMapIfIdle, 60 * 1000);
 state.nightScheduleTimer = window.setInterval(() => {
